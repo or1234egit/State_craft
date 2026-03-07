@@ -1,0 +1,44 @@
+{
+  "rules": {
+    "rooms": {
+      "$roomCode": {
+        // Anyone can read the full room (access control is in app logic)
+        ".read": true,
+
+        "meta": {
+          // Anyone can create a room (transaction-guarded in app)
+          ".write": true
+        },
+
+        "players": {
+          // Anyone can read/write player list (transaction-guarded)
+          ".write": true
+        },
+
+        "publicState": {
+          // Any connected client may update public state
+          ".write": true
+        },
+
+        "private": {
+          "finance": {
+            // Finance private data — write is transaction-guarded in app
+            ".write": true
+          },
+          "defence": {
+            // Defence private data — write is transaction-guarded in app
+            ".write": true
+          }
+        },
+
+        "log": {
+          // Append-only log entries
+          ".write": true,
+          "$entry": {
+            ".validate": "newData.hasChildren(['message', 'ts'])"
+          }
+        }
+      }
+    }
+  }
+}
