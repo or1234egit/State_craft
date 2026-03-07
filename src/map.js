@@ -10,17 +10,35 @@ let canvas, ctx, animFrame, battleAnim = null;
 export function initMap(container) {
   container.innerHTML = '';
   canvas = document.createElement('canvas');
-  canvas.style.cssText = 'width:100%;height:100%;display:block;image-rendering:pixelated;';
+  canvas.style.cssText = 'width:100%;height:100%;display:block;';
   container.appendChild(canvas);
-  resizeCanvas(container);
-  window.addEventListener('resize', () => resizeCanvas(container));
-  ctx = canvas.getContext('2d');
+
+  // Use ResizeObserver so we get real dimensions after layout
+  const ro = new ResizeObserver(entries => {
+    for (const entry of entries) {
+      const { width, height } = entry.contentRect;
+      if (width > 0 && height > 0) {
+        canvas.width  = Math.floor(width);
+        canvas.height = Math.floor(height);
+        ctx = canvas.getContext('2d');
+        // Redraw if we have pending state
+        if (_lastState) drawWorld(
+          _lastState.buildings, _lastState.unitCounts,
+          _lastState.deployedUnits, _lastState.era, _lastState.turn, 0
+        );
+      }
+    }
+  });
+  ro.observe(container);
 }
+
+// Cache last render state so ResizeObserver can redraw
+let _lastState = null;
 
 function resizeCanvas(container) {
   if (!canvas) return;
-  canvas.width  = container.offsetWidth  || 480;
-  canvas.height = container.offsetHeight || 600;
+  const w = container.offsetWidth, h = container.offsetHeight;
+  if (w > 0 && h > 0) { canvas.width = w; canvas.height = h; }
 }
 
 // ─── MAIN RENDER ENTRY ───────────────────────────────────────────────────────
@@ -28,6 +46,14 @@ export function renderMap(container, { buildings, unitCounts, deployedUnits, pha
   if (!canvas || !ctx) initMap(container);
 
   const era = mapEra(buildings || {});
+
+  // Cache for resize redraws
+  _lastState = { buildings: buildings||{}, unitCounts: unitCounts||{},
+                 deployedUnits: deployedUnits||{}, era, turn };
+
+  // Don't draw if canvas has no size yet (ResizeObserver will trigger later)
+  if (!ctx || canvas.width === 0 || canvas.height === 0) return;
+
   cancelAnimationFrame(animFrame);
 
   if (phase === 'attack' && battleAnim) {

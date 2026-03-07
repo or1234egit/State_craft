@@ -46,6 +46,8 @@ let state = {
   logEntries:[], lastBattle:null,
 };
 const unsubs = [];
+let lastShownBattleTs = null;  // timestamp of last battle modal we showed
+
 function unsubAll() { unsubs.forEach(fn=>fn()); unsubs.length=0; }
 
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
@@ -111,21 +113,32 @@ function enterRoom(roomCode, myRole) {
 
   unsubs.push(subscribeMeta(roomCode,        m  => { state.meta=m;            handleStateChange(); }));
   unsubs.push(subscribePlayers(roomCode,     p  => { state.players=p;         handleStateChange(); }));
-  unsubs.push(subscribePublicState(roomCode, pub=> { state.publicState=pub;
-    if (pub?.phase==='attack') renderAttackOverlay();
+  unsubs.push(subscribePublicState(roomCode, pub => {
+    state.publicState = pub;
+    if (pub?.phase === 'attack') renderAttackOverlay();
     else removeAttackOverlay();
     handleStateChange();
+    // If phase just moved away from attack, check if we need to show the modal
+    if (pub?.phase !== 'attack') maybeShowBattleModal();
   }));
-  unsubs.push(subscribeFinance(roomCode,     fin=> { state.financeState=fin;  handleStateChange(); }));
-  unsubs.push(subscribeDefence(roomCode,     def=> { state.defenceState=def;  handleStateChange(); }));
-  unsubs.push(subscribeLog(roomCode,         log=> { state.logEntries=log;    handleStateChange(); }));
-  unsubs.push(subscribeBattle(roomCode,      b  => {
+  unsubs.push(subscribeFinance(roomCode,  fin => { state.financeState = fin; handleStateChange(); }));
+  unsubs.push(subscribeDefence(roomCode,  def => { state.defenceState = def; handleStateChange(); }));
+  unsubs.push(subscribeLog(roomCode,      log => { state.logEntries = log;   handleStateChange(); }));
+  unsubs.push(subscribeBattle(roomCode,   b   => {
     state.lastBattle = b;
-    // Show battle modal once when a new battle result arrives and phase has moved on
-    if (b && state.publicState?.phase !== 'attack') {
-      renderBattleModal(b, null);
-    }
+    // Show modal: new battle (different ts) AND phase is no longer attack
+    if (b?.ts && state.publicState?.phase !== 'attack') maybeShowBattleModal();
   }));
+}
+
+// ─── BATTLE MODAL ────────────────────────────────────────────────────────────
+function maybeShowBattleModal() {
+  const b = state.lastBattle;
+  if (!b?.ts) return;
+  if (b.ts === lastShownBattleTs) return;       // already shown this battle
+  if (state.publicState?.phase === 'attack') return; // wait until phase clears
+  lastShownBattleTs = b.ts;
+  renderBattleModal(b, null);
 }
 
 // ─── STATE → SCREEN ───────────────────────────────────────────────────────────
@@ -186,6 +199,7 @@ function handleNewGame() {
   unsubAll();
   clearSession();
   resetMapInit();
+  lastShownBattleTs = null;
   state = { roomCode:null, myRole:null, meta:null, players:{},
             publicState:null, financeState:null, defenceState:null,
             logEntries:[], lastBattle:null };
