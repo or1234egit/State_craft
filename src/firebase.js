@@ -1,528 +1,330 @@
-// src/firebase.js
-// All Firebase initialization and database operations are here.
-// Replace the firebaseConfig object with your own project credentials.
+// src/firebase.js — v2
+// All Firebase initialization and database operations.
+// Replace firebaseConfig with your real credentials.
 
 import { initializeApp } from 'firebase/app';
-import {
-  getDatabase,
-  ref,
-  set,
-  get,
-  update,
-  push,
-  onValue,
-  runTransaction,
-  serverTimestamp,
-  off,
-} from 'firebase/database';
+import { getDatabase, ref, set, get, update, push, onValue, runTransaction, off } from 'firebase/database';
+import { calcEnemyPower, resolveBattle, calcIncome, calcUpkeep, calcStaticDefence, WIN_TURNS, BUILDINGS, UNITS, blacksmithDiscount, granaryDiscount } from './game.js';
 
-// ─── REPLACE THIS WITH YOUR FIREBASE PROJECT CONFIG ───────────────────────────
-const firebaseConfig = {
+// ─── REPLACE WITH YOUR FIREBASE CONFIG ───────────────────────────────────────
+const firebaseConfig = { 
   apiKey: "AIzaSyAfqDIcanOsVoUzCLcg2PIiEhFTfGSW8s",
   authDomain: "statecraft-8c38c.firebaseapp.com",
   databaseURL: "https://statecraft-8c38c-default-rtdb.firebaseio.com",
-  projectId: "statecraft-8c38c",
-  storageBucket: "statecraft-8c38c.firebasestorage.app",
-  messagingSenderId: "4316691071",
-  appId: "1:4316691071:web:ea9a171f7c795d75261d4a"
-};
-// ──────────────────────────────────────────────────────────────────────────────
+  projectId: "statecraft-8c38c", 
+  storageBucket: "statecraft-8c38c.firebasestorage.app", 
+  messagingSenderId: "4316691071", 
+  appId: "1:4316691071:web:ea9a171f7c795d75261d4a" };
+// ─────────────────────────────────────────────────────────────────────────────
 
 const app = initializeApp(firebaseConfig);
-const db = getDatabase(app);
+const db  = getDatabase(app);
 
-// ─── HELPERS ──────────────────────────────────────────────────────────────────
+// ─── REF HELPERS ─────────────────────────────────────────────────────────────
+const metaRef       = (r) => ref(db, `rooms/${r}/meta`);
+const playersRef    = (r) => ref(db, `rooms/${r}/players`);
+const publicRef     = (r) => ref(db, `rooms/${r}/publicState`);
+const financeRef    = (r) => ref(db, `rooms/${r}/private/finance`);
+const defenceRef    = (r) => ref(db, `rooms/${r}/private/defence`);
+const logRef        = (r) => ref(db, `rooms/${r}/log`);
+const battleRef     = (r) => ref(db, `rooms/${r}/lastBattle`);
 
-function roomRef(roomCode) {
-  return ref(db, `rooms/${roomCode}`);
-}
-function metaRef(roomCode) {
-  return ref(db, `rooms/${roomCode}/meta`);
-}
-function playersRef(roomCode) {
-  return ref(db, `rooms/${roomCode}/players`);
-}
-function publicStateRef(roomCode) {
-  return ref(db, `rooms/${roomCode}/publicState`);
-}
-function financeRef(roomCode) {
-  return ref(db, `rooms/${roomCode}/private/finance`);
-}
-function defenceRef(roomCode) {
-  return ref(db, `rooms/${roomCode}/private/defence`);
-}
-function logRef(roomCode) {
-  return ref(db, `rooms/${roomCode}/log`);
-}
-
-// ─── ROOM OPERATIONS ──────────────────────────────────────────────────────────
-
-/**
- * Creates a new room with initial game state.
- * Uses a transaction to prevent two clients creating the same room simultaneously.
- * Returns { success: boolean, error?: string }
- */
+// ─── ROOM ─────────────────────────────────────────────────────────────────────
 export async function createRoom(roomCode, sessionId) {
-  const mRef = metaRef(roomCode);
   let created = false;
-
-  await runTransaction(mRef, (current) => {
-    if (current !== null) {
-      // Room already exists — abort
-      return undefined;
-    }
+  await runTransaction(metaRef(roomCode), (cur) => {
+    if (cur !== null) return undefined; // exists — abort
     created = true;
-    return {
-      createdAt: Date.now(),
-      hostSessionId: sessionId,
-      status: 'waiting', // waiting | playing | finished
-    };
+    return { createdAt: Date.now(), hostSessionId: sessionId, status: 'waiting' };
   });
+  if (!created) return { success: false, error: 'Room already exists. Try a different code.' };
 
-  if (!created) {
-    return { success: false, error: 'Room already exists. Try a different code.' };
-  }
-
-  // Initialise game state nodes
-  await set(publicStateRef(roomCode), buildInitialPublicState());
-  await set(financeRef(roomCode), buildInitialFinanceState());
-  await set(defenceRef(roomCode), buildInitialDefenceState());
+  await set(publicRef(roomCode),  buildInitialPublic());
+  await set(financeRef(roomCode), buildInitialFinance());
+  await set(defenceRef(roomCode), buildInitialDefence());
   await set(playersRef(roomCode), {});
   await set(logRef(roomCode), {});
-
-  await addLogEntry(roomCode, 'Room created. Waiting for second player…');
+  await addLog(roomCode, 'Room created. Waiting for second player…');
   return { success: true };
 }
 
-/**
- * Joins an existing room.
- * Returns { success: boolean, error?: string }
- */
 export async function joinRoom(roomCode) {
   const snap = await get(metaRef(roomCode));
-  if (!snap.exists()) {
-    return { success: false, error: 'Room not found. Check the code and try again.' };
-  }
-  const meta = snap.val();
-  if (meta.status === 'finished') {
-    return { success: false, error: 'That game has already ended.' };
-  }
+  if (!snap.exists()) return { success: false, error: 'Room not found. Check the code and try again.' };
+  if (snap.val().status === 'finished') return { success: false, error: 'That game has already ended.' };
   return { success: true };
 }
 
-// ─── ROLE OPERATIONS ──────────────────────────────────────────────────────────
-
-/**
- * Claims a role ('finance' | 'defence') in a room.
- * Uses a transaction to ensure each role is claimed by at most one session.
- * Returns { success: boolean, error?: string }
- */
 export async function claimRole(roomCode, role, sessionId) {
-  const pRef = playersRef(roomCode);
   let claimed = false;
-
-  await runTransaction(pRef, (current) => {
-    const players = current || {};
-    // Check if this session already has a role
-    for (const [sid, data] of Object.entries(players)) {
-      if (sid === sessionId) {
-        claimed = true; // already claimed
-        return players; // no change
-      }
-    }
-    // Check if the desired role is taken by someone else
-    for (const [sid, data] of Object.entries(players)) {
-      if (data.role === role && sid !== sessionId) {
-        return undefined; // abort — role taken
-      }
+  await runTransaction(playersRef(roomCode), (cur) => {
+    const players = cur || {};
+    if (players[sessionId]) { claimed = true; return players; }
+    for (const [sid, d] of Object.entries(players)) {
+      if (d.role === role && sid !== sessionId) return undefined; // taken
     }
     claimed = true;
-    players[sessionId] = { role, joinedAt: Date.now(), connected: true };
+    players[sessionId] = { role, joinedAt: Date.now() };
     return players;
   });
+  if (!claimed) return { success: false, error: `The ${role} role is already taken.` };
 
-  if (!claimed) {
-    return { success: false, error: `The ${role} role is already taken.` };
-  }
-
-  // Check if both roles are now filled → start the game
   const snap = await get(playersRef(roomCode));
-  const players = snap.val() || {};
-  const roles = Object.values(players).map((p) => p.role);
+  const roles = Object.values(snap.val()||{}).map(p=>p.role);
   if (roles.includes('finance') && roles.includes('defence')) {
     await update(metaRef(roomCode), { status: 'playing' });
-    await addLogEntry(roomCode, 'Both ministers have joined. The game begins!');
+    await addLog(roomCode, 'Both ministers have joined. The game begins!');
   } else {
-    await addLogEntry(roomCode, `Minister of ${capitalize(role)} has joined. Waiting for partner…`);
+    await addLog(roomCode, `Minister of ${cap(role)} joined. Waiting for partner…`);
   }
-
   return { success: true };
 }
 
-/**
- * Returns the role ('finance'|'defence'|null) of a given sessionId in a room.
- */
 export async function getMyRole(roomCode, sessionId) {
   const snap = await get(playersRef(roomCode));
-  if (!snap.exists()) return null;
-  const players = snap.val();
-  return players[sessionId]?.role || null;
+  return snap.val()?.[sessionId]?.role || null;
 }
 
-// ─── FINANCE ACTIONS ──────────────────────────────────────────────────────────
+// ─── FINANCE ACTIONS ─────────────────────────────────────────────────────────
+export async function buildBuilding(roomCode, buildingId, actionToken) {
+  
+  const bld = BUILDINGS[buildingId];
+  if (!bld) return { success: false, error: 'Unknown building.' };
 
-/**
- * Build a city: costs 50 resources, adds 1 city.
- * Idempotent per action token.
- */
-export async function buildCity(roomCode, actionToken) {
   let result = { success: false, error: '' };
-
-  await runTransaction(financeRef(roomCode), (finance) => {
-    if (!finance) return undefined;
-    if (finance.lastActionToken === actionToken) {
-      result = { success: true, alreadyDone: true };
-      return finance; // idempotent — no change
-    }
-    if (finance.resources < 40) {
-      result = { success: false, error: 'Not enough resources. A city costs 40.' };
-      return undefined; // abort
-    }
+  await runTransaction(financeRef(roomCode), (fin) => {
+    if (!fin) return undefined;
+    if (fin.lastBuildToken === actionToken) { result={success:true,alreadyDone:true}; return fin; }
+    const discount = blacksmithDiscount(fin.buildings||{});
+    const cost = Math.max(0, bld.cost - discount);
+    if (fin.resources < cost) { result={success:false,error:`Need ${cost} gold. You have ${fin.resources}.`}; return undefined; }
     result = { success: true };
-    return {
-      ...finance,
-      resources: finance.resources - 40,
-      cities: finance.cities + 1,
-      lastActionToken: actionToken,
-    };
+    const buildings = { ...(fin.buildings||{}) };
+    buildings[buildingId] = (buildings[buildingId]||0) + 1;
+    return { ...fin, resources: fin.resources - cost, buildings, lastBuildToken: actionToken };
   });
-
-  if (result.success && !result.alreadyDone) {
-    await addLogEntry(roomCode, 'Finance built a new city. (-50 resources, +1 city)');
-  }
+  if (result.success && !result.alreadyDone)
+    await addLog(roomCode, `Finance built a ${bld.label}. ${bld.icon}`);
   return result;
 }
 
-/**
- * Transfer resources from Finance to Defence budget.
- * amount must be a positive integer.
- */
 export async function transferResources(roomCode, amount, actionToken) {
   const amt = parseInt(amount, 10);
-  if (!amt || amt <= 0) return { success: false, error: 'Enter a positive amount to transfer.' };
+  if (!amt || amt <= 0) return { success: false, error: 'Enter a positive amount.' };
 
-  let result = { success: false, error: '' };
-
-  // We need to update both finance and defence atomically using a multi-path update.
-  // Read both first, validate, then write.
-  const [finSnap, defSnap] = await Promise.all([
-    get(financeRef(roomCode)),
-    get(defenceRef(roomCode)),
-  ]);
-
-  if (!finSnap.exists() || !defSnap.exists()) {
-    return { success: false, error: 'Game state not found.' };
-  }
-
-  const finance = finSnap.val();
-  const defence = defSnap.val();
-
-  if (finance.lastTransferToken === actionToken) {
-    return { success: true, alreadyDone: true };
-  }
-  if (finance.resources < amt) {
-    return { success: false, error: `Not enough resources. You have ${finance.resources}.` };
-  }
+  const [finSnap, defSnap] = await Promise.all([get(financeRef(roomCode)), get(defenceRef(roomCode))]);
+  if (!finSnap.exists()||!defSnap.exists()) return { success: false, error: 'State missing.' };
+  const fin = finSnap.val(), def = defSnap.val();
+  if (fin.lastTransferToken === actionToken) return { success: true, alreadyDone: true };
+  if (fin.resources < amt) return { success: false, error: `Only ${fin.resources} gold available.` };
 
   await update(ref(db, `rooms/${roomCode}`), {
-    'private/finance/resources': finance.resources - amt,
+    'private/finance/resources': fin.resources - amt,
     'private/finance/lastTransferToken': actionToken,
-    'private/defence/defenceBudget': defence.defenceBudget + amt,
+    'private/defence/budget': (def.budget||0) + amt,
   });
-
-  await addLogEntry(roomCode, `Finance transferred ${amt} resources to Defence.`);
+  await addLog(roomCode, `Finance transferred ${amt} gold to Defence.`);
   return { success: true };
 }
 
-/**
- * Finance ends their phase.
- */
 export async function financeEndPhase(roomCode, turnNumber) {
-  let changed = false;
-  await runTransaction(publicStateRef(roomCode), (pub) => {
-    if (!pub) return undefined;
-    if (pub.phase !== 'finance') return undefined; // already moved on
-    if (pub.turnNumber !== turnNumber) return undefined;
-    changed = true;
+  let ok = false;
+  await runTransaction(publicRef(roomCode), (pub) => {
+    if (!pub || pub.phase !== 'finance' || pub.turnNumber !== turnNumber) return undefined;
+    ok = true;
     return { ...pub, phase: 'defence' };
   });
-
-  if (changed) {
-    await addLogEntry(roomCode, 'Finance phase ended. Defence phase begins.');
-  }
-  return { success: changed };
+  if (ok) await addLog(roomCode, 'Finance phase ended. Defence phase begins.');
+  return { success: ok };
 }
 
-// ─── DEFENCE ACTIONS ──────────────────────────────────────────────────────────
-
-/**
- * Recruit soldiers: costs 10 resources per soldier from defenceBudget.
- */
-export async function recruitSoldiers(roomCode, count, actionToken) {
+// ─── DEFENCE ACTIONS ─────────────────────────────────────────────────────────
+export async function recruitUnit(roomCode, unitId, count, actionToken) {
+  
+  const unit = UNITS[unitId];
+  if (!unit) return { success: false, error: 'Unknown unit.' };
   const cnt = parseInt(count, 10);
-  if (!cnt || cnt <= 0) return { success: false, error: 'Enter a positive number of soldiers.' };
-  const cost = cnt * 8; // 8 resources per soldier (was 10)
+  if (!cnt || cnt <= 0) return { success: false, error: 'Enter a positive count.' };
+
+  // Need finance buildings for discounts — read separately
+  const finSnap = await get(financeRef(roomCode));
+  const finBuildings = finSnap.val()?.buildings || {};
+  const bDiscount = blacksmithDiscount(finBuildings);
+  const gDiscount = granaryDiscount(finBuildings);
+  const costEach = Math.max(1, unit.cost - bDiscount - gDiscount);
+  const totalCost = costEach * cnt;
 
   let result = { success: false, error: '' };
-
-  await runTransaction(defenceRef(roomCode), (defence) => {
-    if (!defence) return undefined;
-    if (defence.lastRecruitToken === actionToken) {
-      result = { success: true, alreadyDone: true };
-      return defence;
-    }
-    if (defence.defenceBudget < cost) {
-      result = { success: false, error: `Need ${cost} budget. You have ${defence.defenceBudget}.` };
-      return undefined;
-    }
+  await runTransaction(defenceRef(roomCode), (def) => {
+    if (!def) return undefined;
+    if (def.lastRecruitToken === actionToken) { result={success:true,alreadyDone:true}; return def; }
+    if ((def.budget||0) < totalCost) { result={success:false,error:`Need ${totalCost} budget. Have ${def.budget||0}.`}; return undefined; }
     result = { success: true };
-    return {
-      ...defence,
-      soldiers: defence.soldiers + cnt,
-      defenceBudget: defence.defenceBudget - cost,
-      lastRecruitToken: actionToken,
-    };
+    const unitCounts = { ...(def.unitCounts||{}) };
+    unitCounts[unitId] = (unitCounts[unitId]||0) + cnt;
+    return { ...def, unitCounts, budget: (def.budget||0) - totalCost, lastRecruitToken: actionToken };
   });
-
-  if (result.success && !result.alreadyDone) {
-    await addLogEntry(roomCode, `Defence recruited ${cnt} soldier${cnt > 1 ? 's' : ''}. (-${cost} budget)`);
-  }
+  if (result.success && !result.alreadyDone)
+    await addLog(roomCode, `Defence recruited ${cnt}× ${unit.label} ${unit.icon} for ${totalCost} gold.`);
   return result;
 }
 
-/**
- * Deploy soldiers to the defensive line.
- * Cannot deploy more than available soldiers.
- */
-export async function deploySoldiers(roomCode, count, actionToken) {
+export async function deployUnit(roomCode, unitId, count, actionToken) {
+  
+  if (!UNITS[unitId]) return { success: false, error: 'Unknown unit.' };
   const cnt = parseInt(count, 10);
-  if (!cnt || cnt <= 0) return { success: false, error: 'Enter a positive number to deploy.' };
+  if (!cnt || cnt <= 0) return { success: false, error: 'Enter a positive count.' };
 
   let result = { success: false, error: '' };
-
-  await runTransaction(defenceRef(roomCode), (defence) => {
-    if (!defence) return undefined;
-    if (defence.lastDeployToken === actionToken) {
-      result = { success: true, alreadyDone: true };
-      return defence;
-    }
-    const available = defence.soldiers - defence.deployedSoldiers;
-    if (cnt > available) {
-      result = { success: false, error: `Only ${available} soldiers available to deploy.` };
-      return undefined;
-    }
+  await runTransaction(defenceRef(roomCode), (def) => {
+    if (!def) return undefined;
+    if (def.lastDeployToken === actionToken) { result={success:true,alreadyDone:true}; return def; }
+    const available = (def.unitCounts?.[unitId]||0) - (def.deployedUnits?.[unitId]||0);
+    if (cnt > available) { result={success:false,error:`Only ${available} ${unitId} available.`}; return undefined; }
     result = { success: true };
-    return {
-      ...defence,
-      deployedSoldiers: defence.deployedSoldiers + cnt,
-      lastDeployToken: actionToken,
-    };
+    const deployedUnits = { ...(def.deployedUnits||{}) };
+    deployedUnits[unitId] = (deployedUnits[unitId]||0) + cnt;
+    return { ...def, deployedUnits, lastDeployToken: actionToken };
   });
-
-  if (result.success && !result.alreadyDone) {
-    await addLogEntry(roomCode, `Defence deployed ${cnt} soldier${cnt > 1 ? 's' : ''} to the front line.`);
-  }
+  if (result.success && !result.alreadyDone)
+    await addLog(roomCode, `Defence deployed ${cnt}× ${UNITS[unitId].label}.`);
   return result;
 }
 
-/**
- * Defence ends their phase — triggers the enemy attack resolution.
- */
+export async function recallUnit(roomCode, unitId, count, actionToken) {
+  
+  const cnt = parseInt(count, 10);
+  if (!cnt || cnt <= 0) return { success: false, error: 'Enter a positive count.' };
+
+  let result = { success: false, error: '' };
+  await runTransaction(defenceRef(roomCode), (def) => {
+    if (!def) return undefined;
+    if (def.lastRecallToken === actionToken) { result={success:true,alreadyDone:true}; return def; }
+    const deployed = def.deployedUnits?.[unitId]||0;
+    if (cnt > deployed) { result={success:false,error:`Only ${deployed} ${unitId} deployed.`}; return undefined; }
+    result = { success: true };
+    const deployedUnits = { ...(def.deployedUnits||{}) };
+    deployedUnits[unitId] = deployed - cnt;
+    if (deployedUnits[unitId] === 0) delete deployedUnits[unitId];
+    return { ...def, deployedUnits, lastRecallToken: actionToken };
+  });
+  if (result.success && !result.alreadyDone)
+    await addLog(roomCode, `Defence recalled ${cnt}× ${UNITS[unitId]?.label||unitId}.`);
+  return result;
+}
+
 export async function defenceEndPhase(roomCode, turnNumber) {
-  let changed = false;
-  await runTransaction(publicStateRef(roomCode), (pub) => {
-    if (!pub) return undefined;
-    if (pub.phase !== 'defence') return undefined;
-    if (pub.turnNumber !== turnNumber) return undefined;
-    changed = true;
+  let ok = false;
+  await runTransaction(publicRef(roomCode), (pub) => {
+    if (!pub || pub.phase !== 'defence' || pub.turnNumber !== turnNumber) return undefined;
+    ok = true;
     return { ...pub, phase: 'attack' };
   });
-
-  if (changed) {
-    await addLogEntry(roomCode, 'Defence phase ended. Enemy attacks!');
-    // Resolve immediately
+  if (ok) {
+    await addLog(roomCode, 'Defence phase ended. The enemy advances!');
     await resolveAttack(roomCode);
   }
-  return { success: changed };
+  return { success: ok };
 }
 
-// ─── ATTACK RESOLUTION ────────────────────────────────────────────────────────
-
-/**
- * Resolves enemy attack. Idempotent — skips if phase is not 'attack'.
- * All state updates in a single multi-path write after reading current state.
- */
+// ─── ATTACK RESOLUTION ───────────────────────────────────────────────────────
 export async function resolveAttack(roomCode) {
-  const [pubSnap, defSnap] = await Promise.all([
-    get(publicStateRef(roomCode)),
-    get(defenceRef(roomCode)),
+  const [pubSnap, defSnap, finSnap] = await Promise.all([
+    get(publicRef(roomCode)), get(defenceRef(roomCode)), get(financeRef(roomCode))
   ]);
+  if (!pubSnap.exists()||!defSnap.exists()||!finSnap.exists()) return;
+  const pub = pubSnap.val(), def = defSnap.val(), fin = finSnap.val();
+  if (pub.phase !== 'attack') return;
 
-  if (!pubSnap.exists() || !defSnap.exists()) return;
-  const pub = pubSnap.val();
-  const defence = defSnap.val();
+  const turn     = pub.turnNumber;
+  const rawPower = calcEnemyPower(turn);
+  const battle   = resolveBattle({
+    deployedUnits: def.deployedUnits||{},
+    buildings:     fin.buildings||{},
+    enemyPowerRaw: rawPower,
+  });
 
-  if (pub.phase !== 'attack') return; // already resolved
-
-  const turn = pub.turnNumber;
-  // Enemy power: gentler scaling, smaller random spread
-  // Turn 1: ~9–13  Turn 5: ~22–26  Turn 10: ~37–41  Turn 15: ~52–56
-  const enemyPower = 8 + turn * 3 + Math.floor(Math.random() * 7) - 2;
-  const defenceStrength = defence.deployedSoldiers;
-  const defenceWins = defenceStrength >= enemyPower;
-
-  let soldierLosses, countryDamage;
-  if (defenceWins) {
-    // Win: light losses — floor(enemyPower / 12), min 0
-    soldierLosses = Math.max(0, Math.floor(enemyPower / 12));
-    countryDamage = 0;
-  } else {
-    // Loss: moderate losses — floor(enemyPower / 7), min 1
-    soldierLosses = Math.max(1, Math.floor(enemyPower / 7));
-    countryDamage = Math.max(0, enemyPower - defenceStrength);
+  // Apply unit losses
+  const newUnitCounts = { ...(def.unitCounts||{}) };
+  for (const [id, lost] of Object.entries(battle.unitLosses)) {
+    newUnitCounts[id] = Math.max(0, (newUnitCounts[id]||0) - lost);
+    if (newUnitCounts[id] === 0) delete newUnitCounts[id];
   }
 
-  // Survivors return from deployment; losses taken from deployed first, then total
-  const newDeployed = Math.max(0, defenceStrength - soldierLosses);
-  const lostFromDeployed = defenceStrength - newDeployed;
-  const newSoldiers = Math.max(0, defence.soldiers - lostFromDeployed);
-  const newHealth = Math.max(0, pub.countryHealth - countryDamage);
-  const gameOver = newHealth <= 0;
+  const newHealth  = Math.max(0, Math.min(100, pub.countryHealth - battle.countryDamage + battle.heal));
+  const gameOver   = newHealth <= 0;
+  const gameWon    = !gameOver && turn >= WIN_TURNS;
+  const nextPhase  = gameOver ? 'gameover' : gameWon ? 'victory' : 'finance';
+  const nextTurn   = (gameOver||gameWon) ? turn : turn + 1;
 
-  const outcome = defenceWins ? '⚔️ Enemy repelled!' : '💥 Defence line broken!';
-  const logMsg = `Turn ${turn} — ${outcome} Enemy power: ${enemyPower}, Defence: ${defenceStrength}. ` +
-    `Losses: ${lostFromDeployed} soldier${lostFromDeployed !== 1 ? 's' : ''}. ` +
-    (countryDamage > 0 ? `Country took ${countryDamage} damage.` : 'Country unharmed.');
+  // Income + upkeep for next turn
+  const income  = calcIncome(fin.buildings||{});
+  const upkeep  = calcUpkeep(newUnitCounts);
+  const newResources = gameOver ? fin.resources : fin.resources + income + battle.spoils - upkeep;
 
-  await addLogEntry(roomCode, logMsg);
+  // Store battle result for the modal
+  await set(battleRef(roomCode), {
+    turn, ...battle,
+    income: battle.win ? income : 0,
+    upkeep,
+    newHealth,
+    ts: Date.now(),
+  });
 
-  // Determine next phase / game over
-  const nextPhase = gameOver ? 'gameover' : 'finance';
-  const nextTurn = gameOver ? turn : turn + 1;
+  const outcome = battle.win ? '⚔️ Enemy repelled!' : '💥 Defence broken!';
+  const lossStr = Object.entries(battle.unitLosses).map(([id,n])=>`${n} ${id}`).join(', ') || 'none';
+  await addLog(roomCode, `Turn ${turn} — ${outcome} Enemy: ${battle.adjEnemy}, Defence: ${battle.totalDef}. Losses: ${lossStr}.${battle.spoils>0?' Spoils: +'+battle.spoils+' gold.':''}`);
 
-  // Apply income for next turn (cities * 20) if not game over
-  const finSnap = await get(financeRef(roomCode));
-  const finance = finSnap.val();
-  const income = gameOver ? 0 : finance.cities * 30; // 30 per city (was 20)
+  if (gameOver)  await update(metaRef(roomCode), { status: 'finished' });
+  if (gameWon)   await update(metaRef(roomCode), { status: 'finished' });
 
   const updates = {
     'publicState/countryHealth': newHealth,
     'publicState/phase': nextPhase,
     'publicState/turnNumber': nextTurn,
-    'publicState/lastEnemyPower': enemyPower,
-    'private/defence/soldiers': newSoldiers,
-    'private/defence/deployedSoldiers': 0, // survivors return to pool
-    'private/defence/defenceBudget': 0,    // budget resets each turn
+    'publicState/lastEnemyPower': rawPower,
+    'private/defence/unitCounts': newUnitCounts,
+    'private/defence/deployedUnits': {},
+    'private/defence/budget': 0,
   };
-
-  if (!gameOver) {
-    updates['private/finance/resources'] = finance.resources + income;
-    if (income > 0) {
-      await addLogEntry(roomCode, `Turn ${nextTurn} begins. Income: +${income} resources (${finance.cities} cit${finance.cities === 1 ? 'y' : 'ies'}).`);
-    }
-  } else {
-    await update(metaRef(roomCode), { status: 'finished' });
-    await addLogEntry(roomCode, `The country has fallen! Game over after ${turn} turn${turn !== 1 ? 's' : ''}.`);
+  if (!gameOver && !gameWon) {
+    updates['private/finance/resources'] = Math.max(0, newResources);
+    if (income > 0 || battle.spoils > 0)
+      await addLog(roomCode, `Turn ${nextTurn} — Income: +${income}${battle.spoils>0?' Spoils: +'+battle.spoils:''}${upkeep>0?' Upkeep: -'+upkeep:''} = +${income+battle.spoils-upkeep} net.`);
   }
-
   await update(ref(db, `rooms/${roomCode}`), updates);
 }
 
-// ─── LOG ──────────────────────────────────────────────────────────────────────
+// ─── LOG ─────────────────────────────────────────────────────────────────────
+export async function addLog(roomCode, message) {
+  await push(logRef(roomCode), { message, ts: Date.now() });
+}
 
-export async function addLogEntry(roomCode, message) {
-  await push(logRef(roomCode), {
-    message,
-    ts: Date.now(),
+// ─── SUBSCRIPTIONS ───────────────────────────────────────────────────────────
+export function subscribePublicState(r, cb) { const x=publicRef(r); onValue(x,s=>cb(s.val())); return ()=>off(x); }
+export function subscribeMeta(r, cb)        { const x=metaRef(r);   onValue(x,s=>cb(s.val())); return ()=>off(x); }
+export function subscribePlayers(r, cb)     { const x=playersRef(r); onValue(x,s=>cb(s.val()||{})); return ()=>off(x); }
+export function subscribeFinance(r, cb)     { const x=financeRef(r); onValue(x,s=>cb(s.val())); return ()=>off(x); }
+export function subscribeDefence(r, cb)     { const x=defenceRef(r); onValue(x,s=>cb(s.val())); return ()=>off(x); }
+export function subscribeBattle(r, cb)      { const x=battleRef(r);  onValue(x,s=>cb(s.val())); return ()=>off(x); }
+export function subscribeLog(r, cb) {
+  const x = logRef(r);
+  onValue(x, s => {
+    const raw = s.val()||{};
+    cb(Object.values(raw).sort((a,b)=>a.ts-b.ts).slice(-25));
   });
+  return () => off(x);
 }
 
-// ─── REAL-TIME LISTENERS ──────────────────────────────────────────────────────
-
-export function subscribePublicState(roomCode, callback) {
-  const r = publicStateRef(roomCode);
-  onValue(r, (snap) => callback(snap.val()));
-  return () => off(r);
+// ─── INITIAL STATE ────────────────────────────────────────────────────────────
+function buildInitialPublic() {
+  return { turnNumber:1, phase:'finance', countryHealth:100, lastEnemyPower:0 };
+}
+function buildInitialFinance() {
+  return { resources:200, buildings:{ farm:1, city:1 }, lastBuildToken:null, lastTransferToken:null };
+}
+function buildInitialDefence() {
+  return { unitCounts:{ infantry:5, militia:10 }, deployedUnits:{}, budget:0, lastRecruitToken:null, lastDeployToken:null, lastRecallToken:null };
 }
 
-export function subscribeMeta(roomCode, callback) {
-  const r = metaRef(roomCode);
-  onValue(r, (snap) => callback(snap.val()));
-  return () => off(r);
-}
-
-export function subscribePlayers(roomCode, callback) {
-  const r = playersRef(roomCode);
-  onValue(r, (snap) => callback(snap.val() || {}));
-  return () => off(r);
-}
-
-export function subscribeFinance(roomCode, callback) {
-  const r = financeRef(roomCode);
-  onValue(r, (snap) => callback(snap.val()));
-  return () => off(r);
-}
-
-export function subscribeDefence(roomCode, callback) {
-  const r = defenceRef(roomCode);
-  onValue(r, (snap) => callback(snap.val()));
-  return () => off(r);
-}
-
-export function subscribeLog(roomCode, callback) {
-  const r = logRef(roomCode);
-  onValue(r, (snap) => {
-    const raw = snap.val() || {};
-    const entries = Object.values(raw)
-      .sort((a, b) => a.ts - b.ts)
-      .slice(-20); // keep last 20 entries in memory
-    callback(entries);
-  });
-  return () => off(r);
-}
-
-// ─── INITIAL STATE BUILDERS ───────────────────────────────────────────────────
-
-function buildInitialPublicState() {
-  return {
-    turnNumber: 1,
-    phase: 'finance',        // finance | defence | attack | gameover
-    countryHealth: 100,
-    lastEnemyPower: 0,
-  };
-}
-
-function buildInitialFinanceState() {
-  return {
-    resources: 150,    // was 100 — enough to build a city AND transfer funds turn 1
-    cities: 2,         // was 1 — start with 2 cities (60/turn income from the start)
-    lastActionToken: null,
-    lastTransferToken: null,
-  };
-}
-
-function buildInitialDefenceState() {
-  return {
-    soldiers: 30,      // was 20 — a more comfortable starting army
-    deployedSoldiers: 0,
-    defenceBudget: 0,
-    lastRecruitToken: null,
-    lastDeployToken: null,
-  };
-}
-
-// ─── UTILITIES ────────────────────────────────────────────────────────────────
-
-function capitalize(str) {
-  return str.charAt(0).toUpperCase() + str.slice(1);
-}
+function cap(s) { return s.charAt(0).toUpperCase()+s.slice(1); }

@@ -1,342 +1,193 @@
-// src/main.js
-// Orchestrates the application lifecycle:
-//  - Manages local session state (sessionId, roomCode, role)
-//  - Subscribes to Firebase and re-renders on change
-//  - Routes actions to firebase.js
-//  - Reconnects correctly on page refresh
+// src/main.js — v2
+// Orchestrates app lifecycle, subscriptions, and action routing.
 
 import {
-  createRoom,
-  joinRoom,
-  claimRole,
-  getMyRole,
-  buildCity,
-  transferResources,
-  recruitSoldiers,
-  deploySoldiers,
-  financeEndPhase,
-  defenceEndPhase,
-  subscribePublicState,
-  subscribeMeta,
-  subscribePlayers,
-  subscribeFinance,
-  subscribeDefence,
-  subscribeLog,
-  resolveAttack,
+  createRoom, joinRoom, claimRole, getMyRole,
+  buildBuilding, transferResources, financeEndPhase,
+  recruitUnit, deployUnit, recallUnit, defenceEndPhase,
+  subscribePublicState, subscribeMeta, subscribePlayers,
+  subscribeFinance, subscribeDefence, subscribeLog, subscribeBattle,
 } from './firebase.js';
 
 import {
-  renderHome,
-  renderRoleSelect,
-  renderWaiting,
-  renderGameLayout,
-  renderGameOver,
-  showHomeError,
-  showRoleError,
-  showFeedback,
-  renderAttackOverlay,
-  removeAttackOverlay,
-  showExitConfirm,
+  renderHome, renderRoleSelect, renderWaiting, renderGameLayout,
+  renderGameOver, showHomeError, showRoleError, showFeedback,
+  renderAttackOverlay, removeAttackOverlay, showExitConfirm, renderBattleModal,
 } from './ui.js';
 
 import { newToken } from './game.js';
 
-// ─── SESSION PERSISTENCE ──────────────────────────────────────────────────────
-
+// ─── SESSION ──────────────────────────────────────────────────────────────────
 function getSessionId() {
-  let id = localStorage.getItem('statecraft_session');
-  if (!id) {
-    id = 'sess_' + Math.random().toString(36).slice(2, 12);
-    localStorage.setItem('statecraft_session', id);
-  }
+  let id = localStorage.getItem('sc_session');
+  if (!id) { id='sess_'+Math.random().toString(36).slice(2,12); localStorage.setItem('sc_session',id); }
   return id;
 }
-
-function saveRoomSession(roomCode, role) {
-  localStorage.setItem('statecraft_room', roomCode);
-  localStorage.setItem('statecraft_role', role || '');
+function saveSession(room, role) {
+  localStorage.setItem('sc_room', room);
+  localStorage.setItem('sc_role', role||'');
 }
-
-function loadRoomSession() {
-  return {
-    roomCode: localStorage.getItem('statecraft_room') || null,
-    role: localStorage.getItem('statecraft_role') || null,
-  };
+function loadSession() {
+  return { roomCode: localStorage.getItem('sc_room'), role: localStorage.getItem('sc_role') };
 }
-
-function clearRoomSession() {
-  localStorage.removeItem('statecraft_room');
-  localStorage.removeItem('statecraft_role');
+function clearSession() {
+  localStorage.removeItem('sc_room');
+  localStorage.removeItem('sc_role');
 }
-
-// ─── APPLICATION STATE ────────────────────────────────────────────────────────
 
 const SESSION_ID = getSessionId();
 
-// Live state from Firebase subscriptions
+// ─── STATE ────────────────────────────────────────────────────────────────────
 let state = {
-  screen: 'home',      // home | role | waiting | game | gameover
-  roomCode: null,
-  myRole: null,
-  meta: null,
-  players: {},
-  publicState: null,
-  financeState: null,
-  defenceState: null,
-  logEntries: [],
+  roomCode:null, myRole:null,
+  meta:null, players:{},
+  publicState:null, financeState:null, defenceState:null,
+  logEntries:[], lastBattle:null,
 };
-
-// Cleanup functions for active subscriptions
-const unsubscribers = [];
-
-function unsubAll() {
-  unsubscribers.forEach((fn) => fn());
-  unsubscribers.length = 0;
-}
+const unsubs = [];
+function unsubAll() { unsubs.forEach(fn=>fn()); unsubs.length=0; }
 
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
-
 async function boot() {
-  const { roomCode, role } = loadRoomSession();
-
+  const { roomCode, role } = loadSession();
   if (roomCode) {
-    // Try to reconnect to saved room
-    const result = await joinRoom(roomCode);
-    if (result.success) {
+    const res = await joinRoom(roomCode);
+    if (res.success) {
       state.roomCode = roomCode;
       if (role) {
-        // Verify role is still ours in Firebase
-        const existingRole = await getMyRole(roomCode, SESSION_ID);
-        if (existingRole === role) {
-          state.myRole = role;
-          enterRoom(roomCode, role);
-          return;
-        }
+        const existing = await getMyRole(roomCode, SESSION_ID);
+        if (existing === role) { state.myRole=role; enterRoom(roomCode, role); return; }
       }
-      // Room exists but no confirmed role — go to role select
-      enterRoomNoRole(roomCode);
-      return;
+      enterRoomNoRole(roomCode); return;
     }
-    // Saved room no longer valid
-    clearRoomSession();
+    clearSession();
   }
-
   renderHome({ onCreateRoom: handleCreateRoom, onJoinRoom: handleJoinRoom });
 }
 
-// ─── HOME ACTIONS ─────────────────────────────────────────────────────────────
-
+// ─── HOME ─────────────────────────────────────────────────────────────────────
 async function handleCreateRoom(code) {
-  const result = await createRoom(code, SESSION_ID);
-  if (!result.success) {
-    showHomeError('create', result.error);
-    return;
-  }
+  const res = await createRoom(code, SESSION_ID);
+  if (!res.success) { showHomeError('create', res.error); return; }
   state.roomCode = code;
-  saveRoomSession(code, '');
+  saveSession(code, '');
   enterRoomNoRole(code);
 }
-
 async function handleJoinRoom(code) {
-  const result = await joinRoom(code);
-  if (!result.success) {
-    showHomeError('join', result.error);
-    return;
-  }
+  const res = await joinRoom(code);
+  if (!res.success) { showHomeError('join', res.error); return; }
   state.roomCode = code;
-  saveRoomSession(code, '');
+  saveSession(code, '');
   enterRoomNoRole(code);
 }
 
-// ─── ROLE SELECTION ───────────────────────────────────────────────────────────
-
+// ─── ROLE SELECT ──────────────────────────────────────────────────────────────
 function enterRoomNoRole(roomCode) {
   unsubAll();
-
-  // Subscribe to players to update role UI in real time
-  const unsubPlayers = subscribePlayers(roomCode, (players) => {
+  const u = subscribePlayers(roomCode, (players) => {
     state.players = players;
-    // If this session now has a role in Firebase, advance
-    const myEntry = players[SESSION_ID];
-    if (myEntry?.role) {
-      state.myRole = myEntry.role;
-      saveRoomSession(roomCode, myEntry.role);
-      enterRoom(roomCode, myEntry.role);
+    const mine = players[SESSION_ID];
+    if (mine?.role) {
+      state.myRole = mine.role;
+      saveSession(roomCode, mine.role);
+      enterRoom(roomCode, mine.role);
       return;
     }
-    renderRoleSelect({
-      roomCode,
-      players,
-      onClaimRole: handleClaimRole,
-    });
+    renderRoleSelect({ roomCode, players, onClaimRole: handleClaimRole });
   });
-  unsubscribers.push(unsubPlayers);
+  unsubs.push(u);
 }
-
 async function handleClaimRole(role) {
-  const result = await claimRole(state.roomCode, role, SESSION_ID);
-  if (!result.success) {
-    showRoleError(result.error);
-  }
-  // On success, the players subscription fires and enterRoom is called
+  const res = await claimRole(state.roomCode, role, SESSION_ID);
+  if (!res.success) showRoleError(res.error);
 }
 
 // ─── GAME SUBSCRIPTIONS ───────────────────────────────────────────────────────
-
 function enterRoom(roomCode, myRole) {
   unsubAll();
   state.roomCode = roomCode;
-  state.myRole = myRole;
+  state.myRole   = myRole;
 
-  const unsubMeta = subscribeMeta(roomCode, (meta) => {
-    state.meta = meta;
+  unsubs.push(subscribeMeta(roomCode,        m  => { state.meta=m;            handleStateChange(); }));
+  unsubs.push(subscribePlayers(roomCode,     p  => { state.players=p;         handleStateChange(); }));
+  unsubs.push(subscribePublicState(roomCode, pub=> { state.publicState=pub;
+    if (pub?.phase==='attack') renderAttackOverlay();
+    else removeAttackOverlay();
     handleStateChange();
-  });
-
-  const unsubPlayers = subscribePlayers(roomCode, (players) => {
-    state.players = players;
-    handleStateChange();
-  });
-
-  const unsubPub = subscribePublicState(roomCode, (pub) => {
-    state.publicState = pub;
-    handleStateChange();
-
-    // If phase just became 'attack', render the attack overlay
-    if (pub?.phase === 'attack') {
-      renderAttackOverlay();
-    } else {
-      removeAttackOverlay();
+  }));
+  unsubs.push(subscribeFinance(roomCode,     fin=> { state.financeState=fin;  handleStateChange(); }));
+  unsubs.push(subscribeDefence(roomCode,     def=> { state.defenceState=def;  handleStateChange(); }));
+  unsubs.push(subscribeLog(roomCode,         log=> { state.logEntries=log;    handleStateChange(); }));
+  unsubs.push(subscribeBattle(roomCode,      b  => {
+    state.lastBattle = b;
+    // Show battle modal once when a new battle result arrives and phase has moved on
+    if (b && state.publicState?.phase !== 'attack') {
+      renderBattleModal(b, null);
     }
-  });
-
-  const unsubFin = subscribeFinance(roomCode, (fin) => {
-    state.financeState = fin;
-    handleStateChange();
-  });
-
-  const unsubDef = subscribeDefence(roomCode, (def) => {
-    state.defenceState = def;
-    handleStateChange();
-  });
-
-  const unsubLog = subscribeLog(roomCode, (entries) => {
-    state.logEntries = entries;
-    handleStateChange();
-  });
-
-  unsubscribers.push(unsubMeta, unsubPlayers, unsubPub, unsubFin, unsubDef, unsubLog);
+  }));
 }
 
 // ─── STATE → SCREEN ───────────────────────────────────────────────────────────
-
 function handleStateChange() {
   const { meta, players, publicState, financeState, defenceState, logEntries, myRole, roomCode } = state;
-
   if (!meta) return;
 
-  // Waiting for partner
-  const bothJoined = Object.values(players).some((p) => p.role === 'finance') &&
-                     Object.values(players).some((p) => p.role === 'defence');
+  const bothJoined = Object.values(players).some(p=>p.role==='finance') &&
+                     Object.values(players).some(p=>p.role==='defence');
 
-  if (meta.status === 'waiting' || !bothJoined) {
+  if (!bothJoined || meta.status==='waiting') {
     renderWaiting({ roomCode, myRole, players, onExit: handleExitRequest });
     return;
   }
 
-  if (meta.status === 'finished' || publicState?.phase === 'gameover') {
+  const phase = publicState?.phase;
+  if (phase==='gameover' || phase==='victory' || meta.status==='finished') {
     renderGameOver({
-      publicState,
-      financeState,
-      defenceState,
-      myRole,
+      publicState, financeState, defenceState, myRole,
+      won: phase==='victory',
       onNewGame: handleNewGame,
     });
     return;
   }
 
-  // Main game
   renderGameLayout({
-    myRole,
-    roomCode,
-    publicState,
-    financeState,
-    defenceState,
-    logEntries,
+    myRole, roomCode, publicState, financeState, defenceState, logEntries,
     onAction: handleAction,
-    onExit: handleExitRequest,
+    onExit:   handleExitRequest,
   });
 }
 
-// ─── GAME ACTIONS ─────────────────────────────────────────────────────────────
-
-async function handleAction(actionType, payload) {
+// ─── ACTIONS ─────────────────────────────────────────────────────────────────
+async function handleAction(type, payload) {
   const { roomCode, publicState } = state;
   let result;
 
-  switch (actionType) {
-    case 'buildCity':
-      result = await buildCity(roomCode, newToken());
-      break;
-
-    case 'transfer':
-      result = await transferResources(roomCode, payload.amount, newToken());
-      break;
-
-    case 'financeEnd':
-      result = await financeEndPhase(roomCode, publicState.turnNumber);
-      break;
-
-    case 'recruit':
-      result = await recruitSoldiers(roomCode, payload.count, newToken());
-      break;
-
-    case 'deploy':
-      result = await deploySoldiers(roomCode, payload.count, newToken());
-      break;
-
-    case 'defenceEnd':
-      result = await defenceEndPhase(roomCode, publicState.turnNumber);
-      break;
-
-    default:
-      return;
+  switch (type) {
+    case 'build':      result = await buildBuilding(roomCode, payload.id, newToken()); break;
+    case 'transfer':   result = await transferResources(roomCode, payload.amount, newToken()); break;
+    case 'financeEnd': result = await financeEndPhase(roomCode, publicState.turnNumber); break;
+    case 'recruit':    result = await recruitUnit(roomCode, payload.id, payload.count, newToken()); break;
+    case 'deploy':     result = await deployUnit(roomCode, payload.id, payload.count, newToken()); break;
+    case 'recall':     result = await recallUnit(roomCode, payload.id, payload.count, newToken()); break;
+    case 'defenceEnd': result = await defenceEndPhase(roomCode, publicState.turnNumber); break;
+    default: return;
   }
 
-  if (result && !result.success) {
-    showFeedback(result.error, true);
-  } else if (result?.success && !result?.alreadyDone) {
-    showFeedback('✓', false);
-  }
+  if (result && !result.success)           showFeedback(result.error, true);
+  else if (result?.success && !result?.alreadyDone) showFeedback('✓', false);
 }
 
-// ─── EXIT TO HOME (with confirmation) ────────────────────────────────────────
-
+// ─── EXIT ─────────────────────────────────────────────────────────────────────
 function handleExitRequest() {
-  showExitConfirm(() => {
-    handleNewGame();
-  });
+  showExitConfirm(() => handleNewGame());
 }
-
-// ─── NEW GAME ─────────────────────────────────────────────────────────────────
-
 function handleNewGame() {
   unsubAll();
-  clearRoomSession();
-  state = {
-    screen: 'home',
-    roomCode: null,
-    myRole: null,
-    meta: null,
-    players: {},
-    publicState: null,
-    financeState: null,
-    defenceState: null,
-    logEntries: [],
-  };
+  clearSession();
+  state = { roomCode:null, myRole:null, meta:null, players:{},
+            publicState:null, financeState:null, defenceState:null,
+            logEntries:[], lastBattle:null };
   renderHome({ onCreateRoom: handleCreateRoom, onJoinRoom: handleJoinRoom });
 }
-
-// ─── START ────────────────────────────────────────────────────────────────────
 
 boot();
