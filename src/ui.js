@@ -492,4 +492,4 @@ function attachEl(id, ev, fn) {
   if (el) el.addEventListener(ev, fn);
 }
 
-export { renderBattleModal, resetMapInit };
+export { renderBattleModal };
