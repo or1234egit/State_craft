@@ -13,6 +13,7 @@ import {
   renderHome, renderRoleSelect, renderWaiting, renderGameLayout,
   renderGameOver, showHomeError, showRoleError, showFeedback,
   renderAttackOverlay, removeAttackOverlay, showExitConfirm, renderBattleModal,
+  resetMapInit,
 } from './ui.js';
 
 import { newToken } from './game.js';
@@ -184,6 +185,7 @@ function handleExitRequest() {
 function handleNewGame() {
   unsubAll();
   clearSession();
+  resetMapInit();
   state = { roomCode:null, myRole:null, meta:null, players:{},
             publicState:null, financeState:null, defenceState:null,
             logEntries:[], lastBattle:null };

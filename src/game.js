@@ -142,6 +142,53 @@ export function mapEra(buildings) {
   return 'primitive';
 }
 
+// ─── PROGRESSIVE UNLOCKS ─────────────────────────────────────────────────────
+// Buildings and units unlock as turns progress — prevents overwhelming the UI
+// and creates a sense of discovery/progression.
+
+export const BUILDING_UNLOCK_TURN = {
+  farm:       1,   // always available
+  granary:    1,   // always available
+  market:     3,   // available from turn 3
+  blacksmith: 4,
+  city:       5,
+  wall:       3,
+  tower:      7,
+  cathedral:  10,
+};
+
+export const UNIT_UNLOCK_TURN = {
+  militia:  1,   // always available
+  infantry: 1,
+  archer:   2,
+  scout:    2,
+  cavalry:  4,
+  knight:   6,
+  paladin:  8,
+  siege:    9,
+};
+
+export function unlockedBuildings(turn) {
+  return Object.values(BUILDINGS).filter(b => (BUILDING_UNLOCK_TURN[b.id] || 1) <= turn);
+}
+
+export function unlockedUnits(turn) {
+  return Object.values(UNITS).filter(u => (UNIT_UNLOCK_TURN[u.id] || 1) <= turn);
+}
+
+export function nextUnlockBuilding(turn) {
+  // Returns the next building that will unlock soon (within 3 turns)
+  return Object.values(BUILDINGS)
+    .filter(b => BUILDING_UNLOCK_TURN[b.id] > turn && BUILDING_UNLOCK_TURN[b.id] <= turn + 3)
+    .sort((a,b) => BUILDING_UNLOCK_TURN[a.id] - BUILDING_UNLOCK_TURN[b.id])[0] || null;
+}
+
+export function nextUnlockUnit(turn) {
+  return Object.values(UNITS)
+    .filter(u => UNIT_UNLOCK_TURN[u.id] > turn && UNIT_UNLOCK_TURN[u.id] <= turn + 3)
+    .sort((a,b) => UNIT_UNLOCK_TURN[a.id] - UNIT_UNLOCK_TURN[b.id])[0] || null;
+}
+
 // ─── HINTS ───────────────────────────────────────────────────────────────────
 export function treasuryHint(resources) {
   if (resources < 40)  return 'Empty';

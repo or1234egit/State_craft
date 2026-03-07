@@ -3,9 +3,11 @@
 
 import { phaseName, phaseDescription, isMyPhase, threatLevel, threatClass,
          estimateEnemyPower, treasuryHint, armyHint, calcIncome, calcStaticDefence,
-         calcDeployedPower, calcUpkeep, moraleMult, blacksmithDiscount, granaryDiscount,
-         BUILDINGS, UNITS, WIN_TURNS } from './game.js';
-import { renderMap, renderBattleModal } from './map.js';
+         calcDeployedPower, calcUpkeep, blacksmithDiscount, granaryDiscount,
+         BUILDINGS, UNITS, WIN_TURNS,
+         unlockedBuildings, unlockedUnits, nextUnlockBuilding, nextUnlockUnit,
+         BUILDING_UNLOCK_TURN, UNIT_UNLOCK_TURN } from './game.js';
+import { initMap, renderMap, renderBattleModal } from './map.js';
 
 const app = document.getElementById('app');
 
@@ -135,22 +137,20 @@ export function renderWaiting({ roomCode, myRole, players, onExit }) {
 }
 
 // ─── GAME LAYOUT (split: left=map, right=panels) ─────────────────────────────
+let mapInitialized = false;
+
 export function renderGameLayout({ myRole, roomCode, publicState, financeState, defenceState, logEntries, onAction, onExit }) {
-  const phase  = publicState?.phase||'finance';
-  const turn   = publicState?.turnNumber||1;
+  const phase  = publicState?.phase || 'finance';
+  const turn   = publicState?.turnNumber || 1;
   const myTurn = isMyPhase(phase, myRole);
 
   app.innerHTML = `
     <div class="game-layout">
-      <!-- LEFT: Living Map -->
-      <div class="map-panel" id="map-panel">
-        <!-- SVG world injected by renderMap() -->
-      </div>
-      <!-- RIGHT: Panels -->
+      <div class="map-panel" id="map-panel"></div>
       <div class="game-right">
         ${renderSharedPanel(publicState, financeState, defenceState, roomCode, myRole, onExit)}
         <div id="role-panel">
-          ${myRole==='finance'
+          ${myRole === 'finance'
             ? renderFinancePanel(financeState, defenceState, publicState, myTurn)
             : renderDefencePanel(defenceState, financeState, publicState, myTurn)}
         </div>
@@ -158,13 +158,14 @@ export function renderGameLayout({ myRole, roomCode, publicState, financeState, 
       </div>
     </div>`;
 
-  // Inject living map
+  // Init canvas (only once per session) then render
   const mapContainer = document.getElementById('map-panel');
   if (mapContainer) {
+    if (!mapInitialized) { initMap(mapContainer); mapInitialized = true; }
     renderMap(mapContainer, {
-      buildings:     financeState?.buildings||{},
-      unitCounts:    defenceState?.unitCounts||{},
-      deployedUnits: defenceState?.deployedUnits||{},
+      buildings:     financeState?.buildings || {},
+      unitCounts:    defenceState?.unitCounts || {},
+      deployedUnits: defenceState?.deployedUnits || {},
       phase, turn,
     });
   }
@@ -173,54 +174,64 @@ export function renderGameLayout({ myRole, roomCode, publicState, financeState, 
   attachEl('btn-exit-game', 'click', onExit);
 }
 
+export function resetMapInit() { mapInitialized = false; }
+
 // ─── FINANCE PANEL ───────────────────────────────────────────────────────────
 function renderFinancePanel(fin, def, pub, myTurn) {
-  if (!fin||!pub) return '<div class="card">Loading…</div>';
-  const phase    = pub.phase;
-  const dis      = !myTurn || phase!=='finance';
-  const da       = dis?'disabled':'';
-  const income   = calcIncome(fin.buildings||{});
-  const discount = blacksmithDiscount(fin.buildings||{});
-  const buildings= fin.buildings||{};
-  const armyPow  = calcDeployedPower(def?.deployedUnits||{}, fin.buildings||{});
+  if (!fin || !pub) return '<div class="card">Loading…</div>';
+  const phase     = pub.phase;
+  const turn      = pub.turnNumber || 1;
+  const dis       = !myTurn || phase !== 'finance';
+  const da        = dis ? 'disabled' : '';
+  const income    = calcIncome(fin.buildings || {});
+  const discount  = blacksmithDiscount(fin.buildings || {});
+  const buildings = fin.buildings || {};
+  const armyPow   = calcDeployedPower(def?.deployedUnits || {}, fin.buildings || {});
+  const available = unlockedBuildings(turn);
+  const nextBld   = nextUnlockBuilding(turn);
 
-  const buildingRows = Object.values(BUILDINGS).map(b => {
-    const owned   = buildings[b.id]||0;
-    const cost    = Math.max(0, b.cost - discount);
-    const canBuy  = !dis && fin.resources >= cost;
+  const buildingRows = available.map(b => {
+    const owned  = buildings[b.id] || 0;
+    const cost   = Math.max(0, b.cost - discount);
+    const canBuy = !dis && fin.resources >= cost;
     return `
       <div class="shop-row">
-        <span class="shop-icon">${b.icon}</span>
+        <div class="shop-icon-wrap">${b.icon}</div>
         <div class="shop-info">
-          <div class="shop-label">${b.label} <span class="shop-owned">${owned>0?'×'+owned:''}</span></div>
+          <div class="shop-label">${b.label} ${owned > 0 ? `<span class="shop-owned">×${owned}</span>` : ''}</div>
           <div class="shop-desc">${b.desc}</div>
         </div>
-        <button class="btn btn-shop ${canBuy?'':'disabled-shop'}" data-action="build" data-id="${b.id}" ${canBuy?'':'disabled'}>
+        <button class="btn btn-shop ${canBuy ? '' : 'disabled-shop'}" data-action="build" data-id="${b.id}" ${canBuy ? '' : 'disabled'}>
           ${cost}💰
         </button>
       </div>`;
   }).join('');
 
+  const nextHint = nextBld
+    ? `<div class="unlock-hint">🔒 ${nextBld.icon} ${nextBld.label} unlocks turn ${BUILDING_UNLOCK_TURN[nextBld.id]}</div>`
+    : '';
+
   return `
     <div class="card role-card-active finance-role">
       <div class="panel-header">
         <span class="role-icon">💰</span><h2>Minister of Finance</h2>
-        ${myTurn?'<span class="your-turn-badge">Your Turn</span>':''}
+        ${myTurn ? '<span class="your-turn-badge">Your Turn</span>' : ''}
       </div>
       <div class="stat-grid">
         <div class="stat"><div class="stat-label">Treasury</div><div class="stat-value gold">${fin.resources}</div></div>
         <div class="stat"><div class="stat-label">Income/Turn</div><div class="stat-value green">+${income}</div></div>
         <div class="stat"><div class="stat-label">Army Status</div><div class="stat-value hint">${armyHint(armyPow)}</div></div>
-        ${discount>0?`<div class="stat"><div class="stat-label">Discount</div><div class="stat-value green">−${discount}</div></div>`:''}
+        ${discount > 0 ? `<div class="stat"><div class="stat-label">Discount</div><div class="stat-value green">−${discount}</div></div>` : ''}
       </div>
       <div class="action-section">
         <h3>Build</h3>
         <div class="shop-list">${buildingRows}</div>
+        ${nextHint}
         <div class="action-row transfer-row">
           <input type="number" id="transfer-amount" min="1" placeholder="Gold" class="num-input" ${da}/>
           <button id="btn-transfer" class="btn btn-secondary" ${da}>Transfer to Defence</button>
         </div>
-        <button id="btn-finance-end" class="btn btn-end" ${dis?'disabled':''}>End Finance Phase →</button>
+        <button id="btn-finance-end" class="btn btn-end" ${dis ? 'disabled' : ''}>End Finance Phase →</button>
       </div>
       <div id="action-feedback" class="action-feedback"></div>
     </div>`;
@@ -228,26 +239,28 @@ function renderFinancePanel(fin, def, pub, myTurn) {
 
 // ─── DEFENCE PANEL ───────────────────────────────────────────────────────────
 function renderDefencePanel(def, fin, pub, myTurn) {
-  if (!def||!pub) return '<div class="card">Loading…</div>';
-  const phase    = pub.phase;
-  const dis      = !myTurn || phase!=='defence';
-  const da       = dis?'disabled':'';
-  const budget   = def.budget||0;
-  const units    = def.unitCounts||{};
-  const deployed = def.deployedUnits||{};
-  const finBld   = fin?.buildings||{};
-  const bDisc    = blacksmithDiscount(finBld);
-  const gDisc    = granaryDiscount(finBld);
-  const totalDisc= bDisc + gDisc;
-  const upkeep   = calcUpkeep(units);
-  const defPow   = calcDeployedPower(deployed, finBld);
-  const staticD  = calcStaticDefence(finBld);
-  const totalDef = defPow + staticD;
+  if (!def || !pub) return '<div class="card">Loading…</div>';
+  const phase     = pub.phase;
+  const turn      = pub.turnNumber || 1;
+  const dis       = !myTurn || phase !== 'defence';
+  const da        = dis ? 'disabled' : '';
+  const budget    = def.budget || 0;
+  const units     = def.unitCounts || {};
+  const deployed  = def.deployedUnits || {};
+  const finBld    = fin?.buildings || {};
+  const bDisc     = blacksmithDiscount(finBld);
+  const gDisc     = granaryDiscount(finBld);
+  const totalDisc = bDisc + gDisc;
+  const upkeep    = calcUpkeep(units);
+  const defPow    = calcDeployedPower(deployed, finBld);
+  const staticD   = calcStaticDefence(finBld);
+  const totalDef  = defPow + staticD;
+  const available = unlockedUnits(turn);
+  const nextUnit  = nextUnlockUnit(turn);
 
-  // Existing units summary
-  const unitSummary = Object.entries(units).filter(([,n])=>n>0).map(([id,n]) => {
+  const unitSummary = Object.entries(units).filter(([,n]) => n > 0).map(([id, n]) => {
     const u   = UNITS[id];
-    const dep = deployed[id]||0;
+    const dep = deployed[id] || 0;
     return `
       <div class="unit-row">
         <span class="unit-icon">${u.icon}</span>
@@ -256,53 +269,57 @@ function renderDefencePanel(def, fin, pub, myTurn) {
           <span class="unit-count">${n} total / ${dep} deployed</span>
         </div>
         <div class="unit-btns">
-          <button class="btn btn-tiny" data-action="deploy" data-id="${id}" data-count="1" ${dis||dep>=n?'disabled':''}>+Deploy</button>
-          <button class="btn btn-tiny btn-recall" data-action="recall" data-id="${id}" data-count="1" ${dis||dep<=0?'disabled':''}>−Recall</button>
+          <button class="btn btn-tiny" data-action="deploy" data-id="${id}" data-count="1" ${dis || dep >= n ? 'disabled' : ''}>+Deploy</button>
+          <button class="btn btn-tiny btn-recall" data-action="recall" data-id="${id}" data-count="1" ${dis || dep <= 0 ? 'disabled' : ''}>−Recall</button>
         </div>
       </div>`;
   }).join('') || '<div class="muted-text">No units yet. Recruit some below.</div>';
 
-  // Recruit shop
-  const recruitRows = Object.values(UNITS).map(u => {
-    const cost    = Math.max(1, u.cost - totalDisc);
-    const canBuy  = !dis && budget >= cost;
+  const recruitRows = available.map(u => {
+    const cost   = Math.max(1, u.cost - totalDisc);
+    const canBuy = !dis && budget >= cost;
     return `
       <div class="shop-row">
-        <span class="shop-icon">${u.icon}</span>
+        <div class="shop-icon-wrap">${u.icon}</div>
         <div class="shop-info">
-          <div class="shop-label">${u.label}</div>
+          <div class="shop-label">${u.label} ${u.upkeep > 0 ? `<span class="upkeep-badge">upkeep ${u.upkeep}/turn</span>` : ''}</div>
           <div class="shop-desc">${u.desc}</div>
         </div>
         <div class="shop-right">
           <input type="number" min="1" value="1" class="num-input-tiny" id="recruit-count-${u.id}" ${da}/>
-          <button class="btn btn-shop ${canBuy?'':'disabled-shop'}" data-action="recruit" data-id="${u.id}" ${canBuy?'':'disabled'}>
-            ${cost}💰 each
+          <button class="btn btn-shop ${canBuy ? '' : 'disabled-shop'}" data-action="recruit" data-id="${u.id}" ${canBuy ? '' : 'disabled'}>
+            ${cost}💰
           </button>
         </div>
       </div>`;
   }).join('');
 
+  const nextHint = nextUnit
+    ? `<div class="unlock-hint">🔒 ${nextUnit.icon} ${nextUnit.label} unlocks turn ${UNIT_UNLOCK_TURN[nextUnit.id]}</div>`
+    : '';
+
   return `
     <div class="card role-card-active defence-role">
       <div class="panel-header">
         <span class="role-icon">⚔️</span><h2>Minister of Defence</h2>
-        ${myTurn?'<span class="your-turn-badge">Your Turn</span>':''}
+        ${myTurn ? '<span class="your-turn-badge">Your Turn</span>' : ''}
       </div>
       <div class="stat-grid">
         <div class="stat"><div class="stat-label">Budget</div><div class="stat-value gold">${budget}</div></div>
-        <div class="stat"><div class="stat-label">Deploy Power</div><div class="stat-value green">${defPow}</div></div>
+        <div class="stat"><div class="stat-label">Deployed</div><div class="stat-value green">${defPow}</div></div>
         <div class="stat"><div class="stat-label">+Structures</div><div class="stat-value">${staticD}</div></div>
-        <div class="stat"><div class="stat-label">Total Defence</div><div class="stat-value">${totalDef}</div></div>
-        ${upkeep>0?`<div class="stat"><div class="stat-label">Upkeep/Turn</div><div class="stat-value red">${upkeep}</div></div>`:''}
-        ${totalDisc>0?`<div class="stat"><div class="stat-label">Discount</div><div class="stat-value green">−${totalDisc}</div></div>`:''}
-        <div class="stat"><div class="stat-label">Treasury</div><div class="stat-value hint">${treasuryHint(fin?.resources||0)}</div></div>
+        <div class="stat"><div class="stat-label">Total</div><div class="stat-value">${totalDef}</div></div>
+        ${upkeep > 0 ? `<div class="stat"><div class="stat-label">Upkeep</div><div class="stat-value red">${upkeep}/turn</div></div>` : ''}
+        ${totalDisc > 0 ? `<div class="stat"><div class="stat-label">Discount</div><div class="stat-value green">−${totalDisc}</div></div>` : ''}
+        <div class="stat"><div class="stat-label">Treasury</div><div class="stat-value hint">${treasuryHint(fin?.resources || 0)}</div></div>
       </div>
       <div class="action-section">
         <h3>Army</h3>
         <div class="unit-list">${unitSummary}</div>
         <h3>Recruit</h3>
         <div class="shop-list">${recruitRows}</div>
-        <button id="btn-defence-end" class="btn btn-end" ${dis?'disabled':''}>End Defence Phase →</button>
+        ${nextHint}
+        <button id="btn-defence-end" class="btn btn-end" ${dis ? 'disabled' : ''}>End Defence Phase →</button>
       </div>
       <div id="action-feedback" class="action-feedback"></div>
     </div>`;
@@ -475,4 +492,4 @@ function attachEl(id, ev, fn) {
   if (el) el.addEventListener(ev, fn);
 }
 
-export { renderBattleModal };
+export { renderBattleModal, resetMapInit };
