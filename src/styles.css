@@ -489,6 +489,12 @@ input::placeholder { color: var(--text-muted); }
   margin-bottom: 1rem;
 }
 
+.shared-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .room-code-badge {
   font-family: 'Cinzel', serif;
   font-size: 0.78rem;
@@ -695,7 +701,74 @@ input::placeholder { color: var(--text-muted); }
   letter-spacing: 0.07em;
 }
 
-/* ── RESPONSIVE ────────────────────────────────────────────────────────────── */
+.btn-exit-home {
+  background: transparent;
+  border-color: rgba(192, 57, 43, 0.5);
+  color: var(--red-light);
+  font-size: 0.75rem;
+  padding: 0.3rem 0.8rem;
+}
+.btn-exit-home:hover:not(:disabled) {
+  background: rgba(192, 57, 43, 0.15);
+  border-color: var(--red-light);
+}
+
+/* ── MODAL ──────────────────────────────────────────────────────────────────── */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 8, 14, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.modal-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border-lit);
+  border-radius: var(--radius-lg);
+  padding: 2rem;
+  max-width: 400px;
+  width: 90%;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.7);
+}
+
+.modal-box h3 {
+  font-size: 1.15rem;
+  margin-bottom: 0.75rem;
+  color: var(--text-head);
+}
+
+.modal-box p {
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  margin-bottom: 1.5rem;
+  line-height: 1.6;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.modal-actions .btn-exit-home {
+  font-size: 0.82rem;
+  padding: 0.5rem 1.2rem;
+}
+
+/* waiting screen action row */
+.waiting-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+
 
 @media (max-width: 800px) {
   .game-layout {

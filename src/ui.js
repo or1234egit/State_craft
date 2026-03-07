@@ -148,7 +148,7 @@ export function showRoleError(message) {
 
 // ─── SCREEN: WAITING FOR PARTNER ─────────────────────────────────────────────
 
-export function renderWaiting({ roomCode, myRole, players }) {
+export function renderWaiting({ roomCode, myRole, players, onExit }) {
   const partnerRole = myRole === 'finance' ? 'defence' : 'finance';
   const partnerLabel = myRole === 'finance' ? 'Minister of Defence' : 'Minister of Finance';
 
@@ -161,7 +161,10 @@ export function renderWaiting({ roomCode, myRole, players }) {
         <p>You are the <strong>${myRole === 'finance' ? 'Minister of Finance 💰' : 'Minister of Defence ⚔️'}</strong></p>
         <p>Share the room code with your partner so they can join as <strong>${partnerLabel}</strong>.</p>
         <div class="share-code">${roomCode}</div>
-        <button class="btn btn-ghost" id="copy-btn">Copy Room Code</button>
+        <div class="waiting-actions">
+          <button class="btn btn-ghost" id="copy-btn">Copy Room Code</button>
+          <button class="btn btn-exit-home" id="btn-exit-waiting">✕ Exit to Home</button>
+        </div>
       </div>
     </div>
   `;
@@ -175,12 +178,16 @@ export function renderWaiting({ roomCode, myRole, players }) {
       }, 2000);
     });
   });
+
+  if (onExit) {
+    document.getElementById('btn-exit-waiting').addEventListener('click', onExit);
+  }
 }
 
 // ─── GAME LAYOUT SHELL ────────────────────────────────────────────────────────
 // Both game screens share the same 2-column layout shell.
 
-export function renderGameLayout({ myRole, roomCode, publicState, financeState, defenceState, logEntries, onAction }) {
+export function renderGameLayout({ myRole, roomCode, publicState, financeState, defenceState, logEntries, onAction, onExit }) {
   const phase = publicState?.phase || 'finance';
   const turn = publicState?.turnNumber || 1;
   const health = publicState?.countryHealth || 0;
@@ -204,6 +211,7 @@ export function renderGameLayout({ myRole, roomCode, publicState, financeState, 
   `;
 
   attachGameHandlers(myRole, publicState, financeState, defenceState, onAction);
+  attachEl('btn-exit-game', 'click', onExit);
 }
 
 // ─── FINANCE PANEL ────────────────────────────────────────────────────────────
@@ -358,7 +366,10 @@ function renderSharedPanel(pub, finance, defence, roomCode, myRole) {
     <div class="card shared-panel">
       <div class="shared-header">
         <div class="room-code-badge">🏰 ${roomCode}</div>
-        <div class="turn-badge">Turn ${turn}</div>
+        <div class="shared-header-right">
+          <div class="turn-badge">Turn ${turn}</div>
+          <button id="btn-exit-game" class="btn btn-exit-home" title="Exit to Home">✕ Exit</button>
+        </div>
       </div>
 
       <div class="phase-block">
@@ -513,8 +524,46 @@ function attachEl(id, event, handler) {
   if (el) el.addEventListener(event, handler);
 }
 
-// Exported so main.js can call it when finance data changes (hidden info hint)
-export function updateArmyHint(soldiers) {
+// ─── EXIT CONFIRMATION MODAL ──────────────────────────────────────────────────
+
+export function showExitConfirm(onConfirm, onCancel) {
+  const existing = document.getElementById('exit-modal');
+  if (existing) return;
+
+  const modal = document.createElement('div');
+  modal.id = 'exit-modal';
+  modal.className = 'modal-overlay';
+  modal.innerHTML = `
+    <div class="modal-box">
+      <h3>Exit to Home?</h3>
+      <p>You will leave this game. Your partner will remain in the room but the game will be paused for you. You can rejoin using the same room code.</p>
+      <div class="modal-actions">
+        <button class="btn btn-exit-home" id="modal-confirm">✕ Exit to Home</button>
+        <button class="btn btn-ghost" id="modal-cancel">Stay in Game</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  document.getElementById('modal-confirm').addEventListener('click', () => {
+    modal.remove();
+    onConfirm();
+  });
+  document.getElementById('modal-cancel').addEventListener('click', () => {
+    modal.remove();
+    if (onCancel) onCancel();
+  });
+
+  // Click outside to cancel
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      modal.remove();
+      if (onCancel) onCancel();
+    }
+  });
+}
+
+
   const el = document.querySelector('.finance-role .hint');
   if (el) el.textContent = armyHint(soldiers);
 }

@@ -36,6 +36,7 @@ import {
   showFeedback,
   renderAttackOverlay,
   removeAttackOverlay,
+  showExitConfirm,
 } from './ui.js';
 
 import { newToken } from './game.js';
@@ -239,7 +240,7 @@ function handleStateChange() {
                      Object.values(players).some((p) => p.role === 'defence');
 
   if (meta.status === 'waiting' || !bothJoined) {
-    renderWaiting({ roomCode, myRole, players });
+    renderWaiting({ roomCode, myRole, players, onExit: handleExitRequest });
     return;
   }
 
@@ -263,6 +264,7 @@ function handleStateChange() {
     defenceState,
     logEntries,
     onAction: handleAction,
+    onExit: handleExitRequest,
   });
 }
 
@@ -306,6 +308,14 @@ async function handleAction(actionType, payload) {
   } else if (result?.success && !result?.alreadyDone) {
     showFeedback('✓', false);
   }
+}
+
+// ─── EXIT TO HOME (with confirmation) ────────────────────────────────────────
+
+function handleExitRequest() {
+  showExitConfirm(() => {
+    handleNewGame();
+  });
 }
 
 // ─── NEW GAME ─────────────────────────────────────────────────────────────────
