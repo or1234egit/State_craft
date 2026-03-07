@@ -7,14 +7,15 @@ import { getDatabase, ref, set, get, update, push, onValue, runTransaction, off 
 import { calcEnemyPower, resolveBattle, calcIncome, calcUpkeep, calcStaticDefence, WIN_TURNS, BUILDINGS, UNITS, blacksmithDiscount, granaryDiscount } from './game.js';
 
 // ─── REPLACE WITH YOUR FIREBASE CONFIG ───────────────────────────────────────
-const firebaseConfig = { 
+const firebaseConfig = {
   apiKey: "AIzaSyAfqDIcanOsVoUzCLcg2PIiEhFTfGSW8s",
   authDomain: "statecraft-8c38c.firebaseapp.com",
   databaseURL: "https://statecraft-8c38c-default-rtdb.firebaseio.com",
-  projectId: "statecraft-8c38c", 
-  storageBucket: "statecraft-8c38c.firebasestorage.app", 
-  messagingSenderId: "4316691071", 
-  appId: "1:4316691071:web:ea9a171f7c795d75261d4a" };
+  projectId: "statecraft-8c38c",
+  storageBucket: "statecraft-8c38c.firebasestorage.app",
+  messagingSenderId: "4316691071",
+  appId: "1:4316691071:web:ea9a171f7c795d75261d4a"
+};
 // ─────────────────────────────────────────────────────────────────────────────
 
 const app = initializeApp(firebaseConfig);
@@ -229,70 +230,110 @@ export async function defenceEndPhase(roomCode, turnNumber) {
 
 // ─── ATTACK RESOLUTION ───────────────────────────────────────────────────────
 export async function resolveAttack(roomCode) {
-  const [pubSnap, defSnap, finSnap] = await Promise.all([
-    get(publicRef(roomCode)), get(defenceRef(roomCode)), get(financeRef(roomCode))
-  ]);
-  if (!pubSnap.exists()||!defSnap.exists()||!finSnap.exists()) return;
-  const pub = pubSnap.val(), def = defSnap.val(), fin = finSnap.val();
-  if (pub.phase !== 'attack') return;
+  try {
+    const [pubSnap, defSnap, finSnap] = await Promise.all([
+      get(publicRef(roomCode)), get(defenceRef(roomCode)), get(financeRef(roomCode))
+    ]);
+    if (!pubSnap.exists()||!defSnap.exists()||!finSnap.exists()) return;
+    const pub = pubSnap.val(), def = defSnap.val(), fin = finSnap.val();
+    if (pub.phase !== 'attack') return;
 
-  const turn     = pub.turnNumber;
-  const rawPower = calcEnemyPower(turn);
-  const battle   = resolveBattle({
-    deployedUnits: def.deployedUnits||{},
-    buildings:     fin.buildings||{},
-    enemyPowerRaw: rawPower,
-  });
+    const turn = pub.turnNumber;
+    const rawPower = calcEnemyPower(turn);
 
-  // Apply unit losses
-  const newUnitCounts = { ...(def.unitCounts||{}) };
-  for (const [id, lost] of Object.entries(battle.unitLosses)) {
-    newUnitCounts[id] = Math.max(0, (newUnitCounts[id]||0) - lost);
-    if (newUnitCounts[id] === 0) delete newUnitCounts[id];
+    // Firebase stores empty objects as null — always coerce to {}
+    const deployedUnits = def.deployedUnits  && typeof def.deployedUnits  === 'object' ? def.deployedUnits  : {};
+    const unitCounts    = def.unitCounts      && typeof def.unitCounts     === 'object' ? def.unitCounts     : {};
+    const buildings     = fin.buildings       && typeof fin.buildings      === 'object' ? fin.buildings      : {};
+
+    const battle = resolveBattle({ deployedUnits, buildings, enemyPowerRaw: rawPower });
+
+    // Apply unit losses — unitLosses is always a plain object from resolveBattle
+    const newUnitCounts = { ...unitCounts };
+    for (const [id, lost] of Object.entries(battle.unitLosses || {})) {
+      newUnitCounts[id] = Math.max(0, (newUnitCounts[id]||0) - lost);
+      if (newUnitCounts[id] === 0) delete newUnitCounts[id];
+    }
+
+    const newHealth = Math.max(0, Math.min(100, (pub.countryHealth||100) - battle.countryDamage + battle.heal));
+    const gameOver  = newHealth <= 0;
+    const gameWon   = !gameOver && turn >= WIN_TURNS;
+    const nextPhase = gameOver ? 'gameover' : gameWon ? 'victory' : 'finance';
+    const nextTurn  = (gameOver||gameWon) ? turn : turn + 1;
+
+    const income       = calcIncome(buildings);
+    const upkeep       = calcUpkeep(newUnitCounts);
+    const newResources = Math.max(0, (fin.resources||0) + (gameOver ? 0 : income + battle.spoils - upkeep));
+
+    // Store battle result for the modal (best-effort — don't let this block the phase update)
+    try {
+      await set(battleRef(roomCode), {
+        turn,
+        win:           battle.win,
+        adjEnemy:      battle.adjEnemy,
+        arrows:        battle.arrows,
+        staticDef:     battle.staticDef,
+        unitPower:     battle.unitPower,
+        totalDef:      battle.totalDef,
+        unitLosses:    battle.unitLosses || {},
+        countryDamage: battle.countryDamage,
+        spoils:        battle.spoils,
+        heal:          battle.heal,
+        income:        battle.win ? income : 0,
+        upkeep,
+        newHealth,
+        ts: Date.now(),
+      });
+    } catch(e) { console.warn('Battle modal save failed (non-fatal):', e); }
+
+    const outcome = battle.win ? '⚔️ Enemy repelled!' : '💥 Defence broken!';
+    const lossStr = Object.entries(battle.unitLosses||{}).map(([id,n])=>`${n} ${id}`).join(', ') || 'none';
+
+    try { await addLog(roomCode, `Turn ${turn} — ${outcome} Enemy: ${battle.adjEnemy}, Defence: ${battle.totalDef}. Losses: ${lossStr}.${battle.spoils>0?' Spoils: +'+battle.spoils+' gold.':''}`); }
+    catch(e) { console.warn('Log write failed (non-fatal):', e); }
+
+    if (gameOver || gameWon) {
+      try { await update(metaRef(roomCode), { status: 'finished' }); } catch(e) {}
+    }
+
+    // ── THIS IS THE CRITICAL WRITE — always runs ──────────────────────────────
+    const updates = {
+      'publicState/countryHealth': newHealth,
+      'publicState/phase':         nextPhase,
+      'publicState/turnNumber':    nextTurn,
+      'publicState/lastEnemyPower': rawPower,
+      'private/defence/unitCounts':    Object.keys(newUnitCounts).length > 0 ? newUnitCounts : null,
+      'private/defence/deployedUnits': null,   // null = Firebase deletes the key (same as {})
+      'private/defence/budget':        0,
+    };
+    if (!gameOver && !gameWon) {
+      updates['private/finance/resources'] = newResources;
+    }
+    await update(ref(db, `rooms/${roomCode}`), updates);
+    // ─────────────────────────────────────────────────────────────────────────
+
+    if (!gameOver && !gameWon) {
+      try {
+        if (income > 0 || battle.spoils > 0 || upkeep > 0)
+          await addLog(roomCode, `Turn ${nextTurn} starts — Income: +${income}${battle.spoils>0?' Spoils: +'+battle.spoils:''}${upkeep>0?' Upkeep: −'+upkeep:''} = net +${income+battle.spoils-upkeep} gold.`);
+      } catch(e) {}
+    }
+
+  } catch (err) {
+    // Last-resort safety net: if anything above threw, force the phase out of 'attack'
+    // so the game is never permanently stuck.
+    console.error('resolveAttack crashed — forcing phase to finance:', err);
+    try {
+      await update(ref(db, `rooms/${roomCode}`), {
+        'publicState/phase': 'finance',
+        'private/defence/deployedUnits': null,
+        'private/defence/budget': 0,
+      });
+      await addLog(roomCode, '⚠️ Battle resolution error. Turn advanced automatically.');
+    } catch (e2) {
+      console.error('Emergency phase reset also failed:', e2);
+    }
   }
-
-  const newHealth  = Math.max(0, Math.min(100, pub.countryHealth - battle.countryDamage + battle.heal));
-  const gameOver   = newHealth <= 0;
-  const gameWon    = !gameOver && turn >= WIN_TURNS;
-  const nextPhase  = gameOver ? 'gameover' : gameWon ? 'victory' : 'finance';
-  const nextTurn   = (gameOver||gameWon) ? turn : turn + 1;
-
-  // Income + upkeep for next turn
-  const income  = calcIncome(fin.buildings||{});
-  const upkeep  = calcUpkeep(newUnitCounts);
-  const newResources = gameOver ? fin.resources : fin.resources + income + battle.spoils - upkeep;
-
-  // Store battle result for the modal
-  await set(battleRef(roomCode), {
-    turn, ...battle,
-    income: battle.win ? income : 0,
-    upkeep,
-    newHealth,
-    ts: Date.now(),
-  });
-
-  const outcome = battle.win ? '⚔️ Enemy repelled!' : '💥 Defence broken!';
-  const lossStr = Object.entries(battle.unitLosses).map(([id,n])=>`${n} ${id}`).join(', ') || 'none';
-  await addLog(roomCode, `Turn ${turn} — ${outcome} Enemy: ${battle.adjEnemy}, Defence: ${battle.totalDef}. Losses: ${lossStr}.${battle.spoils>0?' Spoils: +'+battle.spoils+' gold.':''}`);
-
-  if (gameOver)  await update(metaRef(roomCode), { status: 'finished' });
-  if (gameWon)   await update(metaRef(roomCode), { status: 'finished' });
-
-  const updates = {
-    'publicState/countryHealth': newHealth,
-    'publicState/phase': nextPhase,
-    'publicState/turnNumber': nextTurn,
-    'publicState/lastEnemyPower': rawPower,
-    'private/defence/unitCounts': newUnitCounts,
-    'private/defence/deployedUnits': {},
-    'private/defence/budget': 0,
-  };
-  if (!gameOver && !gameWon) {
-    updates['private/finance/resources'] = Math.max(0, newResources);
-    if (income > 0 || battle.spoils > 0)
-      await addLog(roomCode, `Turn ${nextTurn} — Income: +${income}${battle.spoils>0?' Spoils: +'+battle.spoils:''}${upkeep>0?' Upkeep: -'+upkeep:''} = +${income+battle.spoils-upkeep} net.`);
-  }
-  await update(ref(db, `rooms/${roomCode}`), updates);
 }
 
 // ─── LOG ─────────────────────────────────────────────────────────────────────

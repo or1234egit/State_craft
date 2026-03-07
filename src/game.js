@@ -52,7 +52,7 @@ export function threatClass(turn) {
 
 // ─── INCOME ──────────────────────────────────────────────────────────────────
 export function calcIncome(buildings) {
-  if (!buildings) return 0;
+  if (!buildings || typeof buildings !== 'object') return 0;
   return Object.entries(buildings).reduce((s,[id,n]) => s + (BUILDINGS[id]?.income||0)*n, 0);
 }
 export function blacksmithDiscount(buildings) {
@@ -62,7 +62,7 @@ export function granaryDiscount(buildings) {
   return Math.min((buildings?.granary||0), 3) * 1;
 }
 export function calcStaticDefence(buildings) {
-  if (!buildings) return 0;
+  if (!buildings || typeof buildings !== 'object') return 0;
   return Object.entries(buildings).reduce((s,[id,n]) => s + (BUILDINGS[id]?.defence||0)*n, 0);
 }
 export function moraleMult(buildings) {
@@ -71,14 +71,15 @@ export function moraleMult(buildings) {
 
 // ─── UPKEEP ──────────────────────────────────────────────────────────────────
 export function calcUpkeep(unitCounts) {
-  if (!unitCounts) return 0;
+  if (!unitCounts || typeof unitCounts !== 'object') return 0;
   return Object.entries(unitCounts).reduce((s,[id,n]) => s + (UNITS[id]?.upkeep||0)*n, 0);
 }
 
 // ─── DEPLOYED POWER ───────────────────────────────────────────────────────────
 export function calcDeployedPower(deployedUnits, buildings) {
-  if (!deployedUnits) return 0;
-  const mult = moraleMult(buildings);
+  if (!deployedUnits || typeof deployedUnits !== 'object') return 0;
+  const bl   = (buildings && typeof buildings === 'object') ? buildings : {};
+  const mult = moraleMult(bl);
   const base = Object.entries(deployedUnits).reduce((s,[id,n]) => s + (UNITS[id]?.power||0)*n, 0);
   return Math.floor(base * mult);
 }
@@ -96,9 +97,13 @@ export function calcSpoils(deployedUnits, adjustedEnemy) {
 
 // ─── BATTLE ──────────────────────────────────────────────────────────────────
 export function resolveBattle({ deployedUnits, buildings, enemyPowerRaw }) {
-  const staticDef   = calcStaticDefence(buildings);
-  const unitPower   = calcDeployedPower(deployedUnits, buildings);
-  const arrows      = archerReduction(deployedUnits);
+  // Firebase returns null for empty objects — always coerce
+  const du = (deployedUnits && typeof deployedUnits === 'object') ? deployedUnits : {};
+  const bl = (buildings     && typeof buildings     === 'object') ? buildings     : {};
+
+  const staticDef   = calcStaticDefence(bl);
+  const unitPower   = calcDeployedPower(du, bl);
+  const arrows      = archerReduction(du);
   const adjEnemy    = Math.max(0, enemyPowerRaw - arrows);
   const totalDef    = unitPower + staticDef;
   const win         = totalDef >= adjEnemy;
@@ -109,15 +114,15 @@ export function resolveBattle({ deployedUnits, buildings, enemyPowerRaw }) {
   let heal          = 0;
 
   if (win) {
-    for (const [id, count] of Object.entries(deployedUnits||{})) {
+    for (const [id, count] of Object.entries(du)) {
       if (UNITS[id]?.cavalryImmune) continue;
       const lost = Math.max(0, Math.floor(count * 0.15));
       if (lost > 0) unitLosses[id] = lost;
     }
-    spoils = calcSpoils(deployedUnits, adjEnemy);
-    heal   = paladinHeal(deployedUnits);
+    spoils = calcSpoils(du, adjEnemy);
+    heal   = paladinHeal(du);
   } else {
-    for (const [id, count] of Object.entries(deployedUnits||{})) {
+    for (const [id, count] of Object.entries(du)) {
       const lost = Math.max(0, Math.floor(count * 0.4));
       if (lost > 0) unitLosses[id] = lost;
     }
