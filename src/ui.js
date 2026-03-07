@@ -563,7 +563,8 @@ export function showExitConfirm(onConfirm, onCancel) {
   });
 }
 
-
+// Exported so main.js can call it when finance data changes (hidden info hint)
+export function updateArmyHint(soldiers) {
   const el = document.querySelector('.finance-role .hint');
   if (el) el.textContent = armyHint(soldiers);
 }
