@@ -18,13 +18,13 @@ import {
 
 // ─── REPLACE THIS WITH YOUR FIREBASE PROJECT CONFIG ───────────────────────────
 const firebaseConfig = {
-  apiKey: "AIzaSyAfqDIcanOsVoUzCLcg2PIiEhFTfGSW8s",
-  authDomain: "statecraft-8c38c.firebaseapp.com",
-  databaseURL: "https://statecraft-8c38c-default-rtdb.firebaseio.com",
-  projectId: "statecraft-8c38c",
-  storageBucket: "statecraft-8c38c.firebasestorage.app",
-  messagingSenderId: "4316691071",
-  appId: "1:4316691071:web:ea9a171f7c795d75261d4a"
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+  databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT_ID.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID",
 };
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -184,14 +184,14 @@ export async function buildCity(roomCode, actionToken) {
       result = { success: true, alreadyDone: true };
       return finance; // idempotent — no change
     }
-    if (finance.resources < 50) {
-      result = { success: false, error: 'Not enough resources. A city costs 50.' };
+    if (finance.resources < 40) {
+      result = { success: false, error: 'Not enough resources. A city costs 40.' };
       return undefined; // abort
     }
     result = { success: true };
     return {
       ...finance,
-      resources: finance.resources - 50,
+      resources: finance.resources - 40,
       cities: finance.cities + 1,
       lastActionToken: actionToken,
     };
@@ -271,7 +271,7 @@ export async function financeEndPhase(roomCode, turnNumber) {
 export async function recruitSoldiers(roomCode, count, actionToken) {
   const cnt = parseInt(count, 10);
   if (!cnt || cnt <= 0) return { success: false, error: 'Enter a positive number of soldiers.' };
-  const cost = cnt * 10;
+  const cost = cnt * 8; // 8 resources per soldier (was 10)
 
   let result = { success: false, error: '' };
 
@@ -375,16 +375,20 @@ export async function resolveAttack(roomCode) {
   if (pub.phase !== 'attack') return; // already resolved
 
   const turn = pub.turnNumber;
-  const enemyPower = 10 + turn * 5 + Math.floor(Math.random() * 11);
+  // Enemy power: gentler scaling, smaller random spread
+  // Turn 1: ~9–13  Turn 5: ~22–26  Turn 10: ~37–41  Turn 15: ~52–56
+  const enemyPower = 8 + turn * 3 + Math.floor(Math.random() * 7) - 2;
   const defenceStrength = defence.deployedSoldiers;
   const defenceWins = defenceStrength >= enemyPower;
 
   let soldierLosses, countryDamage;
   if (defenceWins) {
-    soldierLosses = Math.max(1, Math.floor(enemyPower / 8));
+    // Win: light losses — floor(enemyPower / 12), min 0
+    soldierLosses = Math.max(0, Math.floor(enemyPower / 12));
     countryDamage = 0;
   } else {
-    soldierLosses = Math.max(2, Math.floor(enemyPower / 5));
+    // Loss: moderate losses — floor(enemyPower / 7), min 1
+    soldierLosses = Math.max(1, Math.floor(enemyPower / 7));
     countryDamage = Math.max(0, enemyPower - defenceStrength);
   }
 
@@ -409,7 +413,7 @@ export async function resolveAttack(roomCode) {
   // Apply income for next turn (cities * 20) if not game over
   const finSnap = await get(financeRef(roomCode));
   const finance = finSnap.val();
-  const income = gameOver ? 0 : finance.cities * 20;
+  const income = gameOver ? 0 : finance.cities * 30; // 30 per city (was 20)
 
   const updates = {
     'publicState/countryHealth': newHealth,
@@ -500,8 +504,8 @@ function buildInitialPublicState() {
 
 function buildInitialFinanceState() {
   return {
-    resources: 100,
-    cities: 1,
+    resources: 150,    // was 100 — enough to build a city AND transfer funds turn 1
+    cities: 2,         // was 1 — start with 2 cities (60/turn income from the start)
     lastActionToken: null,
     lastTransferToken: null,
   };
@@ -509,7 +513,7 @@ function buildInitialFinanceState() {
 
 function buildInitialDefenceState() {
   return {
-    soldiers: 20,
+    soldiers: 30,      // was 20 — a more comfortable starting army
     deployedSoldiers: 0,
     defenceBudget: 0,
     lastRecruitToken: null,

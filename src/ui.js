@@ -253,8 +253,8 @@ function renderFinancePanel(finance, pub, myTurn) {
         <h3>Actions</h3>
 
         <div class="action-row">
-          <button id="btn-build-city" class="btn btn-primary" ${disAttr} ${finance.resources < 50 || disabled ? 'disabled' : ''}>
-            Build City (−50 resources)
+          <button id="btn-build-city" class="btn btn-primary" ${disAttr} ${finance.resources < 40 || disabled ? 'disabled' : ''}>
+            Build City (−40 resources)
           </button>
         </div>
 
@@ -322,7 +322,7 @@ function renderDefencePanel(defence, pub, myTurn) {
 
         <div class="action-row">
           <input type="number" id="recruit-count" min="1" placeholder="Count" class="num-input" ${disAttr} />
-          <button id="btn-recruit" class="btn btn-secondary" ${disAttr} ${defence.defenceBudget < 10 || disabled ? 'disabled' : ''}>
+          <button id="btn-recruit" class="btn btn-secondary" ${disAttr} ${defence.defenceBudget < 8 || disabled ? 'disabled' : ''}>
             Recruit (×${SOLDIER_COST} budget)
           </button>
         </div>
