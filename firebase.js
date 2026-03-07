@@ -18,13 +18,13 @@ import {
 
 // ─── REPLACE THIS WITH YOUR FIREBASE PROJECT CONFIG ───────────────────────────
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID",
+  apiKey: "AIzaSyAfqDIcanOsVoUzCLcg2PIiEhFTfGSW8s",
+  authDomain: "statecraft-8c38c.firebaseapp.com",
+  databaseURL: "https://statecraft-8c38c-default-rtdb.firebaseio.com",
+  projectId: "statecraft-8c38c",
+  storageBucket: "statecraft-8c38c.firebasestorage.app",
+  messagingSenderId: "4316691071",
+  appId: "1:4316691071:web:ea9a171f7c795d75261d4a"
 };
 // ──────────────────────────────────────────────────────────────────────────────
 
