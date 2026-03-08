@@ -274,7 +274,6 @@ export async function resolveAttack(roomCode) {
       'publicState/lastBattle/destroyedBuilding':   destroyedBuilding,
       'publicState/lastBattle/ts':                  Date.now(),
       'private/defence/unitCounts': Object.keys(newUnitCounts).length > 0 ? newUnitCounts : null,
-      'private/defence/budget':     0,
     };
     const losses = battle.unitLosses || {};
     if (Object.keys(losses).length > 0) {
