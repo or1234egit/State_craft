@@ -11,32 +11,6 @@ import { initMap, renderMap, renderBattleModal } from './map.js';
 
 const app = document.getElementById('app');
 
-// ─── TOOLTIP ─────────────────────────────────────────────────────────────────
-let _tip = null;
-function getTip() {
-  if (!_tip) {
-    _tip = document.createElement('div');
-    _tip.className = 'unit-tooltip';
-    _tip.style.display = 'none';
-    document.body.appendChild(_tip);
-  }
-  return _tip;
-}
-function showTip(e, html) {
-  const tip = getTip();
-  tip.innerHTML = html;
-  tip.style.display = 'block';
-  moveTip(e, tip);
-}
-function moveTip(e, tip) {
-  tip = tip || getTip();
-  const x = e.clientX + 14, y = e.clientY - 10;
-  const r = tip.getBoundingClientRect();
-  tip.style.left = Math.min(x, window.innerWidth  - r.width  - 8) + 'px';
-  tip.style.top  = Math.max(8, Math.min(y, window.innerHeight - r.height - 8)) + 'px';
-}
-function hideTip() { getTip().style.display = 'none'; }
-
 // ─── HOME ─────────────────────────────────────────────────────────────────────
 export function renderHome({ onCreateRoom, onJoinRoom }) {
   app.innerHTML = `
@@ -320,7 +294,7 @@ function renderDefencePanel(def, fin, pub, myTurn) {
     const cost   = Math.max(1, u.cost - totalDisc);
     const canBuy = !dis && budget >= cost;
     return `
-      <div class="shop-row" data-unit-id="${u.id}">
+      <div class="shop-row">
         <div class="shop-icon-wrap">${u.icon}</div>
         <div class="shop-info">
           <div class="shop-label">${u.label} ${u.upkeep > 0 ? `<span class="upkeep-badge">upkeep ${u.upkeep}/turn</span>` : ''}</div>
@@ -534,26 +508,6 @@ function attachGameHandlers(myRole, publicState, financeState, onAction) {
         btn.textContent = (baseCost * qty) + '💰';
       });
     }
-  });
-
-  // Hover tooltips on unit shop rows
-  document.querySelectorAll('[data-unit-id]').forEach(row => {
-    const id = row.dataset.unitId;
-    const u  = UNITS[id];
-    if (!u) return;
-    const cost = Math.max(1, u.cost - bDisc - gDisc);
-    const html = `
-      <div class="tt-name">${u.icon} ${u.label}</div>
-      <div class="tt-stats">
-        <span class="tt-stat">⚔ Power: <strong>${u.power}</strong></span>
-        <span class="tt-stat">💰 Cost: <strong>${cost} gold</strong></span>
-        ${u.upkeep > 0 ? `<span class="tt-stat">⚙ Upkeep: <strong>${u.upkeep}/turn</strong></span>` : ''}
-        ${u.cavalryImmune ? `<span class="tt-stat">🛡 Survives victories unscathed</span>` : ''}
-      </div>
-      <div class="tt-desc">${u.desc}</div>`;
-    row.addEventListener('mouseenter', e => showTip(e, html));
-    row.addEventListener('mousemove',  e => moveTip(e));
-    row.addEventListener('mouseleave', hideTip);
   });
 
   if (myRole === 'finance') {

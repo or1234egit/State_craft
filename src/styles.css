@@ -318,21 +318,6 @@ input::placeholder { color:var(--text-muted); }
   to   { transform:translateX(-420px); }
 }
 
-/* ── TOOLTIP ─────────────────────────────────────────────── */
-.unit-tooltip {
-  position:fixed; z-index:500; pointer-events:none;
-  background:var(--bg-card); border:1px solid var(--border-lit);
-  border-radius:var(--radius); padding:.65rem .8rem;
-  box-shadow:0 4px 24px rgba(0,0,0,.7);
-  max-width:220px; font-size:.82rem;
-}
-.tt-name  { font-size:.9rem; color:var(--text-head); margin-bottom:.4rem; }
-.tt-stats { display:flex; flex-direction:column; gap:.18rem; margin-bottom:.35rem; }
-.tt-stat  { color:var(--text-muted); font-size:.78rem; }
-.tt-stat strong { color:var(--text-head); }
-.tt-desc  { color:var(--text-muted); font-size:.75rem; line-height:1.4;
-            border-top:1px solid var(--border); padding-top:.35rem; margin-top:.2rem; }
-
 /* ── UNLOCK HINT ─────────────────────────────────────────── */
 .unlock-hint {
   font-size:.72rem; color:var(--text-muted); font-style:italic;
