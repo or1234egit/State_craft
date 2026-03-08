@@ -163,7 +163,10 @@ export async function recruitUnit(roomCode, unitId, count, actionToken) {
     result = { success: true };
     const unitCounts = { ...(def.unitCounts||{}) };
     unitCounts[unitId] = (unitCounts[unitId]||0) + cnt;
-    return { ...def, unitCounts, budget: (def.budget||0) - totalCost, lastRecruitToken: actionToken };
+    // Auto-deploy: recruited soldiers go straight to the front line
+    const deployedUnits = { ...(def.deployedUnits||{}) };
+    deployedUnits[unitId] = (deployedUnits[unitId]||0) + cnt;
+    return { ...def, unitCounts, deployedUnits, budget: (def.budget||0) - totalCost, lastRecruitToken: actionToken };
   });
   if (result.success && !result.alreadyDone)
     await addLog(roomCode, `Defence recruited ${cnt}× ${unit.label} ${unit.icon} for ${totalCost} gold.`);

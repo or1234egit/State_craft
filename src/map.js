@@ -4,6 +4,15 @@
 
 import { BUILDINGS, UNITS, mapEra } from './game.js';
 
+// ─── DETERMINISTIC OFFSET ────────────────────────────────────────────────────
+// Returns a stable integer in [-range, +range] based on a seed string.
+// Replaces Math.random() so building positions never jump on re-render.
+function hashOffset(seed, range) {
+  let h = 5381;
+  for (let i = 0; i < seed.length; i++) h = ((h << 5) + h + seed.charCodeAt(i)) & 0xffffffff;
+  return (((h >>> 0) % (range * 2 + 1)) - range);
+}
+
 // ─── CANVAS SETUP ────────────────────────────────────────────────────────────
 let canvas, ctx, animFrame, battleAnim = null;
 
@@ -273,20 +282,24 @@ function drawBuildings(buildings, era, W, H) {
 }
 
 function assignZones(buildings) {
-  const used = {};
   const result = [];
+  const zoneSlots = {}; // how many sprites already placed per zone
   for (const [id, count] of Object.entries(buildings || {})) {
-    for (let i = 0; i < Math.min(count, 3); i++) {
-      const prefs = BUILDING_ZONES[id] || ['castle'];
-      for (const zid of prefs) {
-        if (!used[zid]) {
-          used[zid] = true;
-          const offsetX = (Math.random() - 0.5) * 20;
-          const offsetY = (Math.random() - 0.5) * 10;
-          result.push({ zoneId: zid, buildingId: id, offsetX, offsetY });
-          break;
-        }
-      }
+    const prefs   = BUILDING_ZONES[id] || ['castle'];
+    const visible = Math.min(count, 6); // show up to 6 sprites per building type
+    for (let i = 0; i < visible; i++) {
+      const zid  = prefs[i % prefs.length];
+      const slot = (zoneSlots[zid] = (zoneSlots[zid] || 0) + 1) - 1;
+      // Arrange sprites in a small 3-col grid within the zone
+      const col  = slot % 3;
+      const row  = Math.floor(slot / 3);
+      const baseOffX = (col - 1) * 26;
+      const baseOffY = row * 22;
+      // Stable jitter so sprites don't jump on every state update
+      const jitterX = hashOffset(id + zid + i + 'x', 6);
+      const jitterY = hashOffset(id + zid + i + 'y', 4);
+      result.push({ zoneId: zid, buildingId: id,
+                    offsetX: baseOffX + jitterX, offsetY: baseOffY + jitterY });
     }
   }
   return result;

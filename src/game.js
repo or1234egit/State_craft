@@ -114,9 +114,11 @@ export function resolveBattle({ deployedUnits, buildings, enemyPowerRaw }) {
   let heal          = 0;
 
   if (win) {
+    // Loss ratio scales with how close the fight was: easy wins cost ~5%, narrow wins ~30%
+    const lossRatio = 0.05 + 0.25 * (adjEnemy / Math.max(1, totalDef));
     for (const [id, count] of Object.entries(du)) {
       if (UNITS[id]?.cavalryImmune) continue;
-      const lost = Math.max(0, Math.floor(count * 0.15));
+      const lost = Math.round(count * lossRatio);
       if (lost > 0) unitLosses[id] = lost;
     }
     spoils = calcSpoils(du, adjEnemy);
@@ -133,12 +135,15 @@ export function resolveBattle({ deployedUnits, buildings, enemyPowerRaw }) {
 }
 
 // ─── MAP ERA ─────────────────────────────────────────────────────────────────
-// Drives visual evolution of the world
+// Drives visual evolution of the world.
+// Uses weighted score so high-tier buildings (city, cathedral) matter more.
+// Start state (farm:1, city:1) = score 4 → primitive. Need 12 for medieval.
 export function mapEra(buildings) {
   if (!buildings) return 'primitive';
-  const total = Object.values(buildings).reduce((a,b)=>a+b,0);
-  if (total >= 10) return 'advanced';
-  if (total >= 4)  return 'medieval';
+  const weights = { city:3, cathedral:3, tower:2, blacksmith:2, market:2, wall:2, granary:1, farm:1 };
+  const score = Object.entries(buildings).reduce((s,[id,n]) => s + (weights[id]||1)*n, 0);
+  if (score >= 25) return 'advanced';
+  if (score >= 12) return 'medieval';
   return 'primitive';
 }
 

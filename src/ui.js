@@ -1,4 +1,4 @@
-// src/ui.js — v2
+// src/ui.js — v3
 // All DOM rendering. No Firebase. Calls map.js for the world view.
 
 import { phaseName, phaseDescription, isMyPhase, threatLevel, threatClass,
@@ -10,6 +10,32 @@ import { phaseName, phaseDescription, isMyPhase, threatLevel, threatClass,
 import { initMap, renderMap, renderBattleModal } from './map.js';
 
 const app = document.getElementById('app');
+
+// ─── TOOLTIP ─────────────────────────────────────────────────────────────────
+let _tip = null;
+function getTip() {
+  if (!_tip) {
+    _tip = document.createElement('div');
+    _tip.className = 'unit-tooltip';
+    _tip.style.display = 'none';
+    document.body.appendChild(_tip);
+  }
+  return _tip;
+}
+function showTip(e, html) {
+  const tip = getTip();
+  tip.innerHTML = html;
+  tip.style.display = 'block';
+  moveTip(e, tip);
+}
+function moveTip(e, tip) {
+  tip = tip || getTip();
+  const x = e.clientX + 14, y = e.clientY - 10;
+  const r = tip.getBoundingClientRect();
+  tip.style.left = Math.min(x, window.innerWidth  - r.width  - 8) + 'px';
+  tip.style.top  = Math.max(8, Math.min(y, window.innerHeight - r.height - 8)) + 'px';
+}
+function hideTip() { getTip().style.display = 'none'; }
 
 // ─── HOME ─────────────────────────────────────────────────────────────────────
 export function renderHome({ onCreateRoom, onJoinRoom }) {
@@ -51,7 +77,7 @@ export function renderHome({ onCreateRoom, onJoinRoom }) {
           <div class="role-card defence-role">
             <div class="role-icon">⚔️</div>
             <h4>Minister of Defence</h4>
-            <p>Recruit militia, archers, cavalry and knights. Deploy them to hold the line. Score: soldiers surviving.</p>
+            <p>Recruit soldiers — they fight automatically. Score: soldiers surviving.</p>
           </div>
         </div>
         <p class="goal-text">Together, survive ${WIN_TURNS} turns to win. The enemy grows stronger every turn.</p>
@@ -98,7 +124,7 @@ export function renderRoleSelect({ roomCode, players, onClaimRole }) {
         </button>
         <button id="pick-defence" class="role-btn defence-role ${defTaken?'role-taken':''}" ${defTaken?'disabled':''}>
           <div class="role-icon">⚔️</div><h3>Minister of Defence</h3>
-          <p>Recruit and command the army.</p>
+          <p>Recruit soldiers — they fight automatically.</p>
           ${defTaken?'<span class="taken-badge">Taken</span>':''}
         </button>
       </div>
@@ -137,44 +163,62 @@ export function renderWaiting({ roomCode, myRole, players, onExit }) {
 }
 
 // ─── GAME LAYOUT (split: left=map, right=panels) ─────────────────────────────
-let mapInitialized = false;
+// Skeleton is created ONCE. Subsequent calls only update inner panels so scroll
+// position and the canvas element are never destroyed.
+let mapInitialized   = false;
+let gameLayoutCreated = false;
 
 export function renderGameLayout({ myRole, roomCode, publicState, financeState, defenceState, logEntries, onAction, onExit }) {
   const phase  = publicState?.phase || 'finance';
   const turn   = publicState?.turnNumber || 1;
   const myTurn = isMyPhase(phase, myRole);
 
-  app.innerHTML = `
-    <div class="game-layout">
-      <div class="map-panel" id="map-panel"></div>
-      <div class="game-right">
-        ${renderSharedPanel(publicState, financeState, defenceState, roomCode, myRole, onExit)}
-        <div id="role-panel">
-          ${myRole === 'finance'
-            ? renderFinancePanel(financeState, defenceState, publicState, myTurn)
-            : renderDefencePanel(defenceState, financeState, publicState, myTurn)}
+  // Build skeleton exactly once per game session
+  if (!gameLayoutCreated || !document.getElementById('map-panel')) {
+    app.innerHTML = `
+      <div class="game-layout">
+        <div class="map-panel" id="map-panel"></div>
+        <div class="game-right">
+          <div id="shared-panel-wrap"></div>
+          <div id="role-panel"></div>
+          <div id="log-panel-wrap"></div>
         </div>
-        ${renderLog(logEntries)}
-      </div>
-    </div>`;
+      </div>`;
+    gameLayoutCreated = true;
+    const mapContainer = document.getElementById('map-panel');
+    if (!mapInitialized) { initMap(mapContainer); mapInitialized = true; }
+  }
 
-  // Init canvas (only once per session) then render
+  // Surgical updates — only inner HTML of each panel changes
+  document.getElementById('shared-panel-wrap').innerHTML =
+    renderSharedPanel(publicState, financeState, defenceState, roomCode, myRole, onExit);
+
+  // Preserve scroll position in the role panel (shop area)
+  const rolePanel   = document.getElementById('role-panel');
+  const prevScroll  = rolePanel.scrollTop;
+  rolePanel.innerHTML = myRole === 'finance'
+    ? renderFinancePanel(financeState, defenceState, publicState, myTurn)
+    : renderDefencePanel(defenceState, financeState, publicState, myTurn);
+  rolePanel.scrollTop = prevScroll;
+
+  document.getElementById('log-panel-wrap').innerHTML = renderLog(logEntries);
+
+  // Map render
   const mapContainer = document.getElementById('map-panel');
   if (mapContainer) {
-    if (!mapInitialized) { initMap(mapContainer); mapInitialized = true; }
     renderMap(mapContainer, {
-      buildings:     financeState?.buildings || {},
-      unitCounts:    defenceState?.unitCounts || {},
-      deployedUnits: defenceState?.deployedUnits || {},
+      buildings:     financeState?.buildings    || {},
+      unitCounts:    defenceState?.unitCounts   || {},
+      deployedUnits: defenceState?.deployedUnits|| {},
       phase, turn,
     });
   }
 
-  attachGameHandlers(myRole, publicState, onAction);
+  attachGameHandlers(myRole, publicState, financeState, onAction);
   attachEl('btn-exit-game', 'click', onExit);
 }
 
-export function resetMapInit() { mapInitialized = false; }
+export function resetMapInit() { mapInitialized = false; gameLayoutCreated = false; }
 
 // ─── FINANCE PANEL ───────────────────────────────────────────────────────────
 function renderFinancePanel(fin, def, pub, myTurn) {
@@ -245,7 +289,7 @@ function renderDefencePanel(def, fin, pub, myTurn) {
   const dis       = !myTurn || phase !== 'defence';
   const da        = dis ? 'disabled' : '';
   const budget    = def.budget || 0;
-  const units     = def.unitCounts || {};
+  const units     = def.unitCounts    || {};
   const deployed  = def.deployedUnits || {};
   const finBld    = fin?.buildings || {};
   const bDisc     = blacksmithDiscount(finBld);
@@ -258,28 +302,25 @@ function renderDefencePanel(def, fin, pub, myTurn) {
   const available = unlockedUnits(turn);
   const nextUnit  = nextUnlockUnit(turn);
 
+  // Army summary — all recruited units fight automatically, no separate deploy step
   const unitSummary = Object.entries(units).filter(([,n]) => n > 0).map(([id, n]) => {
-    const u   = UNITS[id];
-    const dep = deployed[id] || 0;
+    const u = UNITS[id];
     return `
       <div class="unit-row">
         <span class="unit-icon">${u.icon}</span>
         <div class="unit-info">
           <span class="unit-label">${u.label}</span>
-          <span class="unit-count">${n} total / ${dep} deployed</span>
-        </div>
-        <div class="unit-btns">
-          <button class="btn btn-tiny" data-action="deploy" data-id="${id}" data-count="1" ${dis || dep >= n ? 'disabled' : ''}>+Deploy</button>
-          <button class="btn btn-tiny btn-recall" data-action="recall" data-id="${id}" data-count="1" ${dis || dep <= 0 ? 'disabled' : ''}>−Recall</button>
+          <span class="unit-count">${n} deployed · ${u.power * n} power</span>
         </div>
       </div>`;
   }).join('') || '<div class="muted-text">No units yet. Recruit some below.</div>';
 
+  // Recruit shop — hover for tooltip, qty input updates cost live
   const recruitRows = available.map(u => {
     const cost   = Math.max(1, u.cost - totalDisc);
     const canBuy = !dis && budget >= cost;
     return `
-      <div class="shop-row">
+      <div class="shop-row" data-unit-id="${u.id}">
         <div class="shop-icon-wrap">${u.icon}</div>
         <div class="shop-info">
           <div class="shop-label">${u.label} ${u.upkeep > 0 ? `<span class="upkeep-badge">upkeep ${u.upkeep}/turn</span>` : ''}</div>
@@ -287,7 +328,9 @@ function renderDefencePanel(def, fin, pub, myTurn) {
         </div>
         <div class="shop-right">
           <input type="number" min="1" value="1" class="num-input-tiny" id="recruit-count-${u.id}" ${da}/>
-          <button class="btn btn-shop ${canBuy ? '' : 'disabled-shop'}" data-action="recruit" data-id="${u.id}" ${canBuy ? '' : 'disabled'}>
+          <button class="btn btn-shop ${canBuy ? '' : 'disabled-shop'}"
+                  data-action="recruit" data-id="${u.id}" data-basecost="${cost}"
+                  ${canBuy ? '' : 'disabled'}>
             ${cost}💰
           </button>
         </div>
@@ -306,9 +349,9 @@ function renderDefencePanel(def, fin, pub, myTurn) {
       </div>
       <div class="stat-grid">
         <div class="stat"><div class="stat-label">Budget</div><div class="stat-value gold">${budget}</div></div>
-        <div class="stat"><div class="stat-label">Deployed</div><div class="stat-value green">${defPow}</div></div>
+        <div class="stat"><div class="stat-label">Army Power</div><div class="stat-value green">${defPow}</div></div>
         <div class="stat"><div class="stat-label">+Structures</div><div class="stat-value">${staticD}</div></div>
-        <div class="stat"><div class="stat-label">Total</div><div class="stat-value">${totalDef}</div></div>
+        <div class="stat"><div class="stat-label">Total Defence</div><div class="stat-value">${totalDef}</div></div>
         ${upkeep > 0 ? `<div class="stat"><div class="stat-label">Upkeep</div><div class="stat-value red">${upkeep}/turn</div></div>` : ''}
         ${totalDisc > 0 ? `<div class="stat"><div class="stat-label">Discount</div><div class="stat-value green">−${totalDisc}</div></div>` : ''}
         <div class="stat"><div class="stat-label">Treasury</div><div class="stat-value hint">${treasuryHint(fin?.resources || 0)}</div></div>
@@ -462,25 +505,60 @@ export function showExitConfirm(onConfirm, onCancel) {
 }
 
 // ─── EVENT HANDLERS ───────────────────────────────────────────────────────────
-function attachGameHandlers(myRole, publicState, onAction) {
-  // Shop buttons (build / recruit / deploy / recall) — delegated
+function attachGameHandlers(myRole, publicState, financeState, onAction) {
+  const finBld = financeState?.buildings || {};
+  const bDisc  = blacksmithDiscount(finBld);
+  const gDisc  = granaryDiscount(finBld);
+
+  // Shop buttons (build / recruit) — delegated
   document.querySelectorAll('[data-action]').forEach(btn => {
     btn.addEventListener('click', () => {
       const action = btn.dataset.action;
       const id     = btn.dataset.id;
-      if (action === 'build')   onAction('build',   { id });
+      if (action === 'build')   onAction('build', { id });
       if (action === 'recruit') {
         const countEl = document.getElementById(`recruit-count-${id}`);
-        onAction('recruit', { id, count: countEl?.value||1 });
+        onAction('recruit', { id, count: countEl?.value || 1 });
       }
-      if (action === 'deploy')  onAction('deploy',  { id, count: btn.dataset.count||1 });
-      if (action === 'recall')  onAction('recall',  { id, count: btn.dataset.count||1 });
     });
   });
 
+  // Dynamic total cost — updates button label as quantity changes
+  document.querySelectorAll('[data-action="recruit"]').forEach(btn => {
+    const id       = btn.dataset.id;
+    const baseCost = parseInt(btn.dataset.basecost) || 0;
+    const countEl  = document.getElementById(`recruit-count-${id}`);
+    if (countEl) {
+      countEl.addEventListener('input', () => {
+        const qty = Math.max(1, parseInt(countEl.value) || 1);
+        btn.textContent = (baseCost * qty) + '💰';
+      });
+    }
+  });
+
+  // Hover tooltips on unit shop rows
+  document.querySelectorAll('[data-unit-id]').forEach(row => {
+    const id = row.dataset.unitId;
+    const u  = UNITS[id];
+    if (!u) return;
+    const cost = Math.max(1, u.cost - bDisc - gDisc);
+    const html = `
+      <div class="tt-name">${u.icon} ${u.label}</div>
+      <div class="tt-stats">
+        <span class="tt-stat">⚔ Power: <strong>${u.power}</strong></span>
+        <span class="tt-stat">💰 Cost: <strong>${cost} gold</strong></span>
+        ${u.upkeep > 0 ? `<span class="tt-stat">⚙ Upkeep: <strong>${u.upkeep}/turn</strong></span>` : ''}
+        ${u.cavalryImmune ? `<span class="tt-stat">🛡 Survives victories unscathed</span>` : ''}
+      </div>
+      <div class="tt-desc">${u.desc}</div>`;
+    row.addEventListener('mouseenter', e => showTip(e, html));
+    row.addEventListener('mousemove',  e => moveTip(e));
+    row.addEventListener('mouseleave', hideTip);
+  });
+
   if (myRole === 'finance') {
-    attachEl('btn-transfer',    'click', () => onAction('transfer',    { amount: document.getElementById('transfer-amount')?.value }));
-    attachEl('btn-finance-end', 'click', () => onAction('financeEnd',  {}));
+    attachEl('btn-transfer',    'click', () => onAction('transfer',   { amount: document.getElementById('transfer-amount')?.value }));
+    attachEl('btn-finance-end', 'click', () => onAction('financeEnd', {}));
   }
   if (myRole === 'defence') {
     attachEl('btn-defence-end', 'click', () => onAction('defenceEnd', {}));

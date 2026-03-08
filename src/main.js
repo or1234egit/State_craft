@@ -4,7 +4,7 @@
 import {
   createRoom, joinRoom, claimRole, getMyRole,
   buildBuilding, transferResources, financeEndPhase,
-  recruitUnit, deployUnit, recallUnit, defenceEndPhase,
+  recruitUnit, defenceEndPhase,
   subscribePublicState, subscribeMeta, subscribePlayers,
   subscribeFinance, subscribeDefence, subscribeLog, subscribeBattle,
 } from './firebase.js';
@@ -181,8 +181,6 @@ async function handleAction(type, payload) {
     case 'transfer':   result = await transferResources(roomCode, payload.amount, newToken()); break;
     case 'financeEnd': result = await financeEndPhase(roomCode, publicState.turnNumber); break;
     case 'recruit':    result = await recruitUnit(roomCode, payload.id, payload.count, newToken()); break;
-    case 'deploy':     result = await deployUnit(roomCode, payload.id, payload.count, newToken()); break;
-    case 'recall':     result = await recallUnit(roomCode, payload.id, payload.count, newToken()); break;
     case 'defenceEnd': result = await defenceEndPhase(roomCode, publicState.turnNumber); break;
     default: return;
   }
