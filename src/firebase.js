@@ -163,59 +163,13 @@ export async function recruitUnit(roomCode, unitId, count, actionToken) {
     result = { success: true };
     const unitCounts = { ...(def.unitCounts||{}) };
     unitCounts[unitId] = (unitCounts[unitId]||0) + cnt;
-    // Auto-deploy: recruited soldiers go straight to the front line
-    const deployedUnits = { ...(def.deployedUnits||{}) };
-    deployedUnits[unitId] = (deployedUnits[unitId]||0) + cnt;
-    return { ...def, unitCounts, deployedUnits, budget: (def.budget||0) - totalCost, lastRecruitToken: actionToken };
+    return { ...def, unitCounts, budget: (def.budget||0) - totalCost, lastRecruitToken: actionToken };
   });
   if (result.success && !result.alreadyDone)
     await addLog(roomCode, `Defence recruited ${cnt}× ${unit.label} ${unit.icon} for ${totalCost} gold.`);
   return result;
 }
 
-export async function deployUnit(roomCode, unitId, count, actionToken) {
-  
-  if (!UNITS[unitId]) return { success: false, error: 'Unknown unit.' };
-  const cnt = parseInt(count, 10);
-  if (!cnt || cnt <= 0) return { success: false, error: 'Enter a positive count.' };
-
-  let result = { success: false, error: '' };
-  await runTransaction(defenceRef(roomCode), (def) => {
-    if (!def) return undefined;
-    if (def.lastDeployToken === actionToken) { result={success:true,alreadyDone:true}; return def; }
-    const available = (def.unitCounts?.[unitId]||0) - (def.deployedUnits?.[unitId]||0);
-    if (cnt > available) { result={success:false,error:`Only ${available} ${unitId} available.`}; return undefined; }
-    result = { success: true };
-    const deployedUnits = { ...(def.deployedUnits||{}) };
-    deployedUnits[unitId] = (deployedUnits[unitId]||0) + cnt;
-    return { ...def, deployedUnits, lastDeployToken: actionToken };
-  });
-  if (result.success && !result.alreadyDone)
-    await addLog(roomCode, `Defence deployed ${cnt}× ${UNITS[unitId].label}.`);
-  return result;
-}
-
-export async function recallUnit(roomCode, unitId, count, actionToken) {
-  
-  const cnt = parseInt(count, 10);
-  if (!cnt || cnt <= 0) return { success: false, error: 'Enter a positive count.' };
-
-  let result = { success: false, error: '' };
-  await runTransaction(defenceRef(roomCode), (def) => {
-    if (!def) return undefined;
-    if (def.lastRecallToken === actionToken) { result={success:true,alreadyDone:true}; return def; }
-    const deployed = def.deployedUnits?.[unitId]||0;
-    if (cnt > deployed) { result={success:false,error:`Only ${deployed} ${unitId} deployed.`}; return undefined; }
-    result = { success: true };
-    const deployedUnits = { ...(def.deployedUnits||{}) };
-    deployedUnits[unitId] = deployed - cnt;
-    if (deployedUnits[unitId] === 0) delete deployedUnits[unitId];
-    return { ...def, deployedUnits, lastRecallToken: actionToken };
-  });
-  if (result.success && !result.alreadyDone)
-    await addLog(roomCode, `Defence recalled ${cnt}× ${UNITS[unitId]?.label||unitId}.`);
-  return result;
-}
 
 export async function defenceEndPhase(roomCode, turnNumber) {
   let ok = false;
@@ -245,11 +199,10 @@ export async function resolveAttack(roomCode) {
     const rawPower = calcEnemyPower(turn);
 
     // Firebase stores empty objects as null — always coerce to {}
-    const deployedUnits = def.deployedUnits  && typeof def.deployedUnits  === 'object' ? def.deployedUnits  : {};
-    const unitCounts    = def.unitCounts      && typeof def.unitCounts     === 'object' ? def.unitCounts     : {};
-    const buildings     = fin.buildings       && typeof fin.buildings      === 'object' ? fin.buildings      : {};
+    const unitCounts = def.unitCounts  && typeof def.unitCounts  === 'object' ? def.unitCounts  : {};
+    const buildings  = fin.buildings   && typeof fin.buildings   === 'object' ? fin.buildings   : {};
 
-    const battle = resolveBattle({ deployedUnits, buildings, enemyPowerRaw: rawPower });
+    const battle = resolveBattle({ units: unitCounts, buildings, enemyPowerRaw: rawPower });
 
     // Apply unit losses — unitLosses is always a plain object from resolveBattle
     const newUnitCounts = { ...unitCounts };
@@ -322,9 +275,8 @@ export async function resolveAttack(roomCode) {
       'publicState/lastBattle/upkeep':        upkeep,
       'publicState/lastBattle/newHealth':     newHealth,
       'publicState/lastBattle/ts':            Date.now(),
-      'private/defence/unitCounts':    Object.keys(newUnitCounts).length > 0 ? newUnitCounts : null,
-      'private/defence/deployedUnits': null,
-      'private/defence/budget':        0,
+      'private/defence/unitCounts': Object.keys(newUnitCounts).length > 0 ? newUnitCounts : null,
+      'private/defence/budget':     0,
     };
     // unitLosses is itself an object — each entry needs its own flat path
     const losses = battle.unitLosses || {};
@@ -353,7 +305,6 @@ export async function resolveAttack(roomCode) {
     try {
       await update(ref(db, `rooms/${roomCode}`), {
         'publicState/phase': 'finance',
-        'private/defence/deployedUnits': null,
         'private/defence/budget': 0,
       });
       await addLog(roomCode, '⚠️ Battle resolution error. Turn advanced automatically.');
@@ -392,7 +343,7 @@ function buildInitialFinance() {
   return { resources:200, buildings:{ farm:1, city:1 }, lastBuildToken:null, lastTransferToken:null };
 }
 function buildInitialDefence() {
-  return { unitCounts:{ infantry:5, militia:10 }, deployedUnits:{}, budget:0, lastRecruitToken:null, lastDeployToken:null, lastRecallToken:null };
+  return { unitCounts:{ infantry:5, militia:10 }, budget:0, lastRecruitToken:null };
 }
 
 function cap(s) { return s.charAt(0).toUpperCase()+s.slice(1); }

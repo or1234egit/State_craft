@@ -33,7 +33,7 @@ export function initMap(container) {
         // Redraw if we have pending state
         if (_lastState) drawWorld(
           _lastState.buildings, _lastState.unitCounts,
-          _lastState.deployedUnits, _lastState.era, _lastState.turn, 0
+          _lastState.era, _lastState.turn, 0
         );
       }
     }
@@ -51,14 +51,13 @@ function resizeCanvas(container) {
 }
 
 // ─── MAIN RENDER ENTRY ───────────────────────────────────────────────────────
-export function renderMap(container, { buildings, unitCounts, deployedUnits, phase, turn }) {
+export function renderMap(container, { buildings, unitCounts, phase, turn }) {
   if (!canvas || !ctx || !canvas.isConnected) initMap(container);
 
   const era = mapEra(buildings || {});
 
   // Cache for resize redraws
-  _lastState = { buildings: buildings||{}, unitCounts: unitCounts||{},
-                 deployedUnits: deployedUnits||{}, era, turn };
+  _lastState = { buildings: buildings||{}, unitCounts: unitCounts||{}, era, turn };
 
   // Don't draw if canvas has no size yet (ResizeObserver will trigger later)
   if (!ctx || canvas.width === 0 || canvas.height === 0) return;
@@ -66,15 +65,15 @@ export function renderMap(container, { buildings, unitCounts, deployedUnits, pha
   cancelAnimationFrame(animFrame);
 
   if (phase === 'attack' && battleAnim) {
-    runBattleAnimation(buildings, unitCounts, deployedUnits, era, turn);
+    runBattleAnimation(buildings, unitCounts, era, turn);
   } else {
     battleAnim = null;
-    drawWorld(buildings || {}, unitCounts || {}, deployedUnits || {}, era, turn, 0);
+    drawWorld(buildings || {}, unitCounts || {}, era, turn, 0);
   }
 }
 
 // ─── WORLD DRAW ──────────────────────────────────────────────────────────────
-function drawWorld(buildings, unitCounts, deployedUnits, era, turn, tick) {
+function drawWorld(buildings, unitCounts, era, turn, tick) {
   const W = canvas.width, H = canvas.height;
   ctx.clearRect(0, 0, W, H);
 
@@ -83,7 +82,7 @@ function drawWorld(buildings, unitCounts, deployedUnits, era, turn, tick) {
   drawPaths(era, W, H);
   drawBuildings(buildings, era, W, H);
   drawWalls(buildings, era, W, H);
-  drawSoldierFormation(unitCounts, deployedUnits, era, W, H, tick);
+  drawSoldierFormation(unitCounts, era, W, H, tick);
   drawHUD(era, turn, W, H);
 }
 
@@ -549,7 +548,7 @@ function drawWalls(buildings, era, W, H) {
 }
 
 // ─── SOLDIER FORMATION ────────────────────────────────────────────────────────
-function drawSoldierFormation(unitCounts, deployedUnits, era, W, H, tick) {
+function drawSoldierFormation(unitCounts, era, W, H, tick) {
   const totalUnits = Object.values(unitCounts || {}).reduce((a,b)=>a+b,0);
   if (!totalUnits) return;
 
@@ -672,19 +671,19 @@ function drawHUD(era, turn, W, H) {
 }
 
 // ─── BATTLE ANIMATION ────────────────────────────────────────────────────────
-export function startBattleAnimation(container, buildings, unitCounts, deployedUnits, era, turn) {
+export function startBattleAnimation(container, buildings, unitCounts, era, turn) {
   if (!canvas || !ctx) initMap(container);
-  battleAnim = { tick: 0, phase: 'approach', buildings, unitCounts, deployedUnits, era, turn };
-  runBattleAnimation(buildings, unitCounts, deployedUnits, era, turn);
+  battleAnim = { tick: 0, phase: 'approach', buildings, unitCounts, era, turn };
+  runBattleAnimation(buildings, unitCounts, era, turn);
 }
 
-function runBattleAnimation(buildings, unitCounts, deployedUnits, era, turn) {
+function runBattleAnimation(buildings, unitCounts, era, turn) {
   if (!battleAnim) return;
   const W = canvas.width, H = canvas.height;
   const tick = battleAnim.tick++;
 
   // Draw base world
-  drawWorld(buildings, unitCounts, deployedUnits, era, turn, tick);
+  drawWorld(buildings, unitCounts, era, turn, tick);
 
   const APPROACH_END = 60;
   const CLASH_END    = 90;
@@ -737,7 +736,7 @@ function runBattleAnimation(buildings, unitCounts, deployedUnits, era, turn) {
   }
 
   if (tick < RETREAT_END) {
-    animFrame = requestAnimationFrame(() => runBattleAnimation(buildings, unitCounts, deployedUnits, era, turn));
+    animFrame = requestAnimationFrame(() => runBattleAnimation(buildings, unitCounts, era, turn));
   } else {
     battleAnim = null;
   }

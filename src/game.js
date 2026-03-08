@@ -96,9 +96,9 @@ export function calcSpoils(deployedUnits, adjustedEnemy) {
 }
 
 // ─── BATTLE ──────────────────────────────────────────────────────────────────
-export function resolveBattle({ deployedUnits, buildings, enemyPowerRaw }) {
+export function resolveBattle({ units, buildings, enemyPowerRaw }) {
   // Firebase returns null for empty objects — always coerce
-  const du = (deployedUnits && typeof deployedUnits === 'object') ? deployedUnits : {};
+  const du = (units && typeof units === 'object') ? units : {};
   const bl = (buildings     && typeof buildings     === 'object') ? buildings     : {};
 
   const staticDef   = calcStaticDefence(bl);

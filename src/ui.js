@@ -181,9 +181,8 @@ export function renderGameLayout({ myRole, roomCode, publicState, financeState, 
   const mapContainer = document.getElementById('map-panel');
   if (mapContainer) {
     renderMap(mapContainer, {
-      buildings:     financeState?.buildings    || {},
-      unitCounts:    defenceState?.unitCounts   || {},
-      deployedUnits: defenceState?.deployedUnits|| {},
+      buildings:  financeState?.buildings  || {},
+      unitCounts: defenceState?.unitCounts || {},
       phase, turn,
     });
   }
@@ -204,7 +203,7 @@ function renderFinancePanel(fin, def, pub, myTurn) {
   const income    = calcIncome(fin.buildings || {});
   const discount  = blacksmithDiscount(fin.buildings || {});
   const buildings = fin.buildings || {};
-  const armyPow   = calcDeployedPower(def?.deployedUnits || {}, fin.buildings || {});
+  const armyPow   = calcDeployedPower(def?.unitCounts || {}, fin.buildings || {});
   const available = unlockedBuildings(turn);
   const nextBld   = nextUnlockBuilding(turn);
 
@@ -263,14 +262,13 @@ function renderDefencePanel(def, fin, pub, myTurn) {
   const dis       = !myTurn || phase !== 'defence';
   const da        = dis ? 'disabled' : '';
   const budget    = def.budget || 0;
-  const units     = def.unitCounts    || {};
-  const deployed  = def.deployedUnits || {};
+  const units     = def.unitCounts || {};
   const finBld    = fin?.buildings || {};
   const bDisc     = blacksmithDiscount(finBld);
   const gDisc     = granaryDiscount(finBld);
   const totalDisc = bDisc + gDisc;
   const upkeep    = calcUpkeep(units);
-  const defPow    = calcDeployedPower(deployed, finBld);
+  const defPow    = calcDeployedPower(units, finBld);
   const staticD   = calcStaticDefence(finBld);
   const totalDef  = defPow + staticD;
   const available = unlockedUnits(turn);
