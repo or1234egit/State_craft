@@ -358,6 +358,40 @@ input::placeholder { color:var(--text-muted); }
   font-size:.65rem; padding:1px 5px; border-radius:3px; margin-left:.3rem;
 }
 
+/* ── ENEMY TYPE CARD (shared panel) ─────────────────────── */
+.enemy-type-card {
+  display:flex; align-items:center; gap:.65rem;
+  padding:.5rem .7rem; border-radius:var(--radius);
+  border:1px solid var(--border); margin-top:.75rem;
+  background:var(--bg);
+}
+.et-icon { font-size:1.4rem; flex-shrink:0; }
+.et-body { flex:1; min-width:0; }
+.et-label { font-size:.82rem; color:var(--text-head); font-weight:bold; }
+.et-desc  { font-size:.72rem; color:var(--text-muted); line-height:1.35; margin-top:.1rem; }
+.et-standard { border-color:rgba(100,100,120,.4); }
+.et-cavalry  { border-color:rgba(180,120,60,.5);  background:rgba(180,120,60,.06); }
+.et-siege    { border-color:rgba(192,57,43,.5);   background:rgba(192,57,43,.06); }
+.et-ambush   { border-color:rgba(100,60,160,.5);  background:rgba(100,60,160,.06); }
+
+/* ── ENEMY WARNING (defence panel) ──────────────────────── */
+.enemy-warning {
+  font-size:.78rem; padding:.35rem .65rem; border-radius:var(--radius);
+  margin-bottom:.6rem; border-left:3px solid transparent; line-height:1.4;
+}
+.enemy-warning.cavalry { background:rgba(180,120,60,.15); border-color:#c08040; color:#e8b870; }
+.enemy-warning.siege   { background:rgba(192,57,43,.15);  border-color:var(--red-light); color:#ffaaaa; }
+.enemy-warning.ambush  { background:rgba(100,60,160,.15); border-color:#9060d0; color:#c0a0f0; }
+
+/* ── SHOP LOCKED ROW ─────────────────────────────────────── */
+.shop-locked { opacity:.55; }
+
+/* ── BATTLE MODAL ENEMY TYPE ─────────────────────────────── */
+.bm-enemy-type {
+  text-align:center; font-size:.85rem; color:var(--text-muted);
+  letter-spacing:.05em; margin-bottom:.2rem;
+}
+
 /* ── RESPONSIVE ──────────────────────────────────────────── */
 @media (max-width:850px) {
   .game-layout { grid-template-columns:1fr; }

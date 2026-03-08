@@ -4,7 +4,7 @@
 
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, set, get, update, push, onValue, runTransaction, off } from 'firebase/database';
-import { calcEnemyPower, resolveBattle, calcIncome, calcUpkeep, calcStaticDefence, WIN_TURNS, BUILDINGS, UNITS, blacksmithDiscount, granaryDiscount } from './game.js';
+import { calcEnemyPower, resolveBattle, calcIncome, calcUpkeep, calcStaticDefence, WIN_TURNS, BUILDINGS, UNITS, blacksmithDiscount, granaryDiscount, rollEnemyType } from './game.js';
 
 // ─── REPLACE WITH YOUR FIREBASE CONFIG ───────────────────────────────────────
 const firebaseConfig = {
@@ -96,11 +96,16 @@ export async function buildBuilding(roomCode, buildingId, actionToken) {
   await runTransaction(financeRef(roomCode), (fin) => {
     if (!fin) return undefined;
     if (fin.lastBuildToken === actionToken) { result={success:true,alreadyDone:true}; return fin; }
-    const discount = blacksmithDiscount(fin.buildings||{});
+    const buildings = { ...(fin.buildings||{}) };
+    // City prerequisites
+    if (buildingId === 'city') {
+      if (!(buildings.market > 0)) { result={success:false,error:'Build a market before constructing a city.'}; return undefined; }
+      if ((buildings.city||0) >= 3)  { result={success:false,error:'Maximum 3 cities already built.'}; return undefined; }
+    }
+    const discount = blacksmithDiscount(buildings);
     const cost = Math.max(0, bld.cost - discount);
     if (fin.resources < cost) { result={success:false,error:`Need ${cost} gold. You have ${fin.resources}.`}; return undefined; }
     result = { success: true };
-    const buildings = { ...(fin.buildings||{}) };
     buildings[buildingId] = (buildings[buildingId]||0) + 1;
     return { ...fin, resources: fin.resources - cost, buildings, lastBuildToken: actionToken };
   });
@@ -195,20 +200,30 @@ export async function resolveAttack(roomCode) {
     const pub = pubSnap.val(), def = defSnap.val(), fin = finSnap.val();
     if (pub.phase !== 'attack') return;
 
-    const turn = pub.turnNumber;
-    const rawPower = calcEnemyPower(turn);
+    const turn      = pub.turnNumber;
+    const enemyType = pub.currentEnemyType || 'standard';
+    const rawPower  = calcEnemyPower(turn);
 
     // Firebase stores empty objects as null — always coerce to {}
-    const unitCounts = def.unitCounts  && typeof def.unitCounts  === 'object' ? def.unitCounts  : {};
-    const buildings  = fin.buildings   && typeof fin.buildings   === 'object' ? fin.buildings   : {};
+    const unitCounts = def.unitCounts && typeof def.unitCounts === 'object' ? def.unitCounts : {};
+    const buildings  = fin.buildings  && typeof fin.buildings  === 'object' ? fin.buildings  : {};
 
-    const battle = resolveBattle({ units: unitCounts, buildings, enemyPowerRaw: rawPower });
+    const battle = resolveBattle({ units: unitCounts, buildings, enemyPowerRaw: rawPower, enemyType });
 
-    // Apply unit losses — unitLosses is always a plain object from resolveBattle
+    // Apply unit losses
     const newUnitCounts = { ...unitCounts };
     for (const [id, lost] of Object.entries(battle.unitLosses || {})) {
       newUnitCounts[id] = Math.max(0, (newUnitCounts[id]||0) - lost);
       if (newUnitCounts[id] === 0) delete newUnitCounts[id];
+    }
+
+    // Building destruction on loss — enemy sacks the city
+    let newBuildings     = buildings;
+    let destroyedBuilding = null;
+    if (!battle.win) {
+      const result = destroyRandomBuilding(buildings);
+      newBuildings      = result.buildings;
+      destroyedBuilding = result.id;
     }
 
     const newHealth = Math.max(0, Math.min(100, (pub.countryHealth||100) - battle.countryDamage + battle.heal));
@@ -216,69 +231,51 @@ export async function resolveAttack(roomCode) {
     const gameWon   = !gameOver && turn >= WIN_TURNS;
     const nextPhase = gameOver ? 'gameover' : gameWon ? 'victory' : 'finance';
     const nextTurn  = (gameOver||gameWon) ? turn : turn + 1;
+    const nextEnemyType = rollEnemyType(nextTurn);
 
-    const income       = calcIncome(buildings);
+    const income       = calcIncome(newBuildings);  // income reflects post-destruction state
     const upkeep       = calcUpkeep(newUnitCounts);
     const newResources = Math.max(0, (fin.resources||0) + (gameOver ? 0 : income + battle.spoils - upkeep));
 
-    // Store battle result for the modal (best-effort — don't let this block the phase update)
-    try {
-      await set(battleRef(roomCode), {
-        turn,
-        win:           battle.win,
-        adjEnemy:      battle.adjEnemy,
-        arrows:        battle.arrows,
-        staticDef:     battle.staticDef,
-        unitPower:     battle.unitPower,
-        totalDef:      battle.totalDef,
-        unitLosses:    battle.unitLosses || {},
-        countryDamage: battle.countryDamage,
-        spoils:        battle.spoils,
-        heal:          battle.heal,
-        income:        battle.win ? income : 0,
-        upkeep,
-        newHealth,
-        ts: Date.now(),
-      });
-    } catch(e) { console.warn('Battle modal save failed (non-fatal):', e); }
-
     const outcome = battle.win ? '⚔️ Enemy repelled!' : '💥 Defence broken!';
     const lossStr = Object.entries(battle.unitLosses||{}).map(([id,n])=>`${n} ${id}`).join(', ') || 'none';
+    const destroyStr = destroyedBuilding ? ` The enemy destroyed your ${BUILDINGS[destroyedBuilding]?.label || destroyedBuilding}!` : '';
 
-    try { await addLog(roomCode, `Turn ${turn} — ${outcome} Enemy: ${battle.adjEnemy}, Defence: ${battle.totalDef}. Losses: ${lossStr}.${battle.spoils>0?' Spoils: +'+battle.spoils+' gold.':''}`); }
+    try { await addLog(roomCode, `Turn ${turn} — ${outcome} Enemy: ${battle.adjEnemy}, Defence: ${battle.totalDef}. Losses: ${lossStr}.${destroyStr}${battle.spoils>0?' Spoils: +'+battle.spoils+' gold.':''}`); }
     catch(e) { console.warn('Log write failed (non-fatal):', e); }
 
     if (gameOver || gameWon) {
       try { await update(metaRef(roomCode), { status: 'finished' }); } catch(e) {}
     }
 
-    // ── THIS IS THE CRITICAL WRITE — always runs ──────────────────────────────
-    // lastBattle is written as flat leaf paths inside publicState so both clients
-    // receive it atomically with the phase change. Nested objects are NOT allowed
-    // in Firebase multi-path update() — each field must be a scalar path.
+    // ── CRITICAL WRITE ────────────────────────────────────────────────────────
     const updates = {
-      'publicState/countryHealth':            newHealth,
-      'publicState/phase':                    nextPhase,
-      'publicState/turnNumber':               nextTurn,
-      'publicState/lastEnemyPower':           rawPower,
-      'publicState/lastBattle/turn':          turn,
-      'publicState/lastBattle/win':           battle.win,
-      'publicState/lastBattle/adjEnemy':      battle.adjEnemy,
-      'publicState/lastBattle/arrows':        battle.arrows,
-      'publicState/lastBattle/staticDef':     battle.staticDef,
-      'publicState/lastBattle/unitPower':     battle.unitPower,
-      'publicState/lastBattle/totalDef':      battle.totalDef,
-      'publicState/lastBattle/countryDamage': battle.countryDamage,
-      'publicState/lastBattle/spoils':        battle.spoils,
-      'publicState/lastBattle/heal':          battle.heal,
-      'publicState/lastBattle/income':        battle.win ? income : 0,
-      'publicState/lastBattle/upkeep':        upkeep,
-      'publicState/lastBattle/newHealth':     newHealth,
-      'publicState/lastBattle/ts':            Date.now(),
+      'publicState/countryHealth':                  newHealth,
+      'publicState/phase':                          nextPhase,
+      'publicState/turnNumber':                     nextTurn,
+      'publicState/lastEnemyPower':                 rawPower,
+      'publicState/currentEnemyType':               nextEnemyType,
+      'publicState/lastBattle/turn':                turn,
+      'publicState/lastBattle/win':                 battle.win,
+      'publicState/lastBattle/adjEnemy':            battle.adjEnemy,
+      'publicState/lastBattle/arrows':              battle.arrows,
+      'publicState/lastBattle/staticDef':           battle.staticDef,
+      'publicState/lastBattle/effectiveStaticDef':  battle.effectiveStaticDef,
+      'publicState/lastBattle/wallEff':             battle.wallEff,
+      'publicState/lastBattle/unitPower':           battle.unitPower,
+      'publicState/lastBattle/totalDef':            battle.totalDef,
+      'publicState/lastBattle/countryDamage':       battle.countryDamage,
+      'publicState/lastBattle/spoils':              battle.spoils,
+      'publicState/lastBattle/heal':                battle.heal,
+      'publicState/lastBattle/income':              battle.win ? income : 0,
+      'publicState/lastBattle/upkeep':              upkeep,
+      'publicState/lastBattle/newHealth':           newHealth,
+      'publicState/lastBattle/enemyType':           enemyType,
+      'publicState/lastBattle/destroyedBuilding':   destroyedBuilding,
+      'publicState/lastBattle/ts':                  Date.now(),
       'private/defence/unitCounts': Object.keys(newUnitCounts).length > 0 ? newUnitCounts : null,
       'private/defence/budget':     0,
     };
-    // unitLosses is itself an object — each entry needs its own flat path
     const losses = battle.unitLosses || {};
     if (Object.keys(losses).length > 0) {
       Object.entries(losses).forEach(([id, n]) => { updates[`publicState/lastBattle/unitLosses/${id}`] = n; });
@@ -287,6 +284,7 @@ export async function resolveAttack(roomCode) {
     }
     if (!gameOver && !gameWon) {
       updates['private/finance/resources'] = newResources;
+      updates['private/finance/buildings'] = Object.keys(newBuildings).length > 0 ? newBuildings : { farm: 1 };
     }
     await update(ref(db, `rooms/${roomCode}`), updates);
     // ─────────────────────────────────────────────────────────────────────────
@@ -294,7 +292,7 @@ export async function resolveAttack(roomCode) {
     if (!gameOver && !gameWon) {
       try {
         if (income > 0 || battle.spoils > 0 || upkeep > 0)
-          await addLog(roomCode, `Turn ${nextTurn} starts — Income: +${income}${battle.spoils>0?' Spoils: +'+battle.spoils:''}${upkeep>0?' Upkeep: −'+upkeep:''} = net +${income+battle.spoils-upkeep} gold.`);
+          await addLog(roomCode, `Turn ${nextTurn} starts — Income: +${income}${battle.spoils>0?' Spoils: +'+battle.spoils:''}${upkeep>0?' Upkeep: −'+upkeep:''} = net +${income+battle.spoils-upkeep} gold. Next wave: ${nextEnemyType}.`);
       } catch(e) {}
     }
 
@@ -337,13 +335,29 @@ export function subscribeLog(r, cb) {
 
 // ─── INITIAL STATE ────────────────────────────────────────────────────────────
 function buildInitialPublic() {
-  return { turnNumber:1, phase:'finance', countryHealth:100, lastEnemyPower:0 };
+  return { turnNumber:1, phase:'finance', countryHealth:100, lastEnemyPower:0, currentEnemyType:'standard' };
 }
 function buildInitialFinance() {
-  return { resources:200, buildings:{ farm:1, city:1 }, lastBuildToken:null, lastTransferToken:null };
+  return { resources:100, buildings:{ farm:1 }, lastBuildToken:null, lastTransferToken:null };
 }
 function buildInitialDefence() {
-  return { unitCounts:{ infantry:5, militia:10 }, budget:0, lastRecruitToken:null };
+  return { unitCounts:{ infantry:3, militia:5 }, budget:0, lastRecruitToken:null };
+}
+
+// Destroy a random building (protects last farm)
+function destroyRandomBuilding(buildings) {
+  const pool = [];
+  for (const [id, n] of Object.entries(buildings || {})) {
+    if (n <= 0) continue;
+    const count = (id === 'farm') ? Math.max(0, n - 1) : n;
+    for (let i = 0; i < count; i++) pool.push(id);
+  }
+  if (!pool.length) return { buildings: { ...(buildings||{}) }, id: null };
+  const target = pool[Math.floor(Math.random() * pool.length)];
+  const updated = { ...(buildings||{}) };
+  updated[target]--;
+  if (updated[target] === 0) delete updated[target];
+  return { buildings: updated, id: target };
 }
 
 function cap(s) { return s.charAt(0).toUpperCase()+s.slice(1); }

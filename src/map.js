@@ -2,7 +2,7 @@
 // Draws a real top-down 2D world with terrain tiles, buildings as pixel-art style sprites,
 // animated soldier figures, parallax sky, and a dramatic battle sequence.
 
-import { BUILDINGS, UNITS, mapEra } from './game.js';
+import { BUILDINGS, UNITS, mapEra, ENEMY_TYPES } from './game.js';
 
 // ─── DETERMINISTIC OFFSET ────────────────────────────────────────────────────
 // Returns a stable integer in [-range, +range] based on a seed string.
@@ -814,7 +814,9 @@ export function renderBattleModal(battle, onClose) {
   if (existing) existing.remove();
   if (!battle) return;
 
-  const win = battle.win;
+  const win   = battle.win;
+  const eType = ENEMY_TYPES[battle.enemyType] || ENEMY_TYPES.standard;
+
   const lossLines = Object.entries(battle.unitLosses || {})
     .filter(([,n]) => n > 0)
     .map(([id, n]) => {
@@ -822,11 +824,19 @@ export function renderBattleModal(battle, onClose) {
       return `<div class="bl-row loss">${unit?.icon || '⚔️'} Lost ${n}× ${unit?.label || id}</div>`;
     }).join('') || '<div class="bl-row neutral">No casualties</div>';
 
+  const effStaticDef = battle.effectiveStaticDef ?? battle.staticDef ?? 0;
+  const rawStaticDef = battle.staticDef ?? 0;
+  const wallEff      = battle.wallEff ?? 1;
+  const wallNote     = rawStaticDef > 0 && wallEff < 0.99
+    ? `+${effStaticDef} walls (${Math.round(wallEff*100)}% effective vs ${eType.label})`
+    : rawStaticDef > 0 ? `+${rawStaticDef} from structures` : '';
+
   const modal = document.createElement('div');
   modal.id = 'battle-modal';
   modal.className = 'battle-modal-overlay';
   modal.innerHTML = `
     <div class="battle-modal ${win ? 'battle-win' : 'battle-loss'}">
+      <div class="bm-enemy-type">${eType.icon} ${eType.label}</div>
       <div class="bm-banner">${win ? '⚔️ VICTORY' : '💥 DEFEAT'}</div>
       <div class="bm-sub">${win ? 'The enemy has been repelled!' : 'The enemy broke through your lines!'}</div>
 
@@ -840,7 +850,7 @@ export function renderBattleModal(battle, onClose) {
         <div class="bm-side">
           <div class="bm-side-label">YOUR DEFENCE</div>
           <div class="bm-power def-power">${battle.totalDef ?? '?'}</div>
-          ${(battle.staticDef ?? 0) > 0 ? `<div class="bm-detail">+${battle.staticDef} from structures</div>` : ''}
+          ${wallNote ? `<div class="bm-detail">${wallNote}</div>` : ''}
         </div>
       </div>
 
@@ -848,6 +858,7 @@ export function renderBattleModal(battle, onClose) {
 
       <div class="bm-results">
         ${lossLines}
+        ${battle.destroyedBuilding ? `<div class="bl-row loss">🏚️ Enemy destroyed your ${BUILDINGS[battle.destroyedBuilding]?.label || battle.destroyedBuilding}!</div>` : ''}
         ${(battle.countryDamage ?? 0) > 0  ? `<div class="bl-row loss">🩸 Country took ${battle.countryDamage} damage</div>` : ''}
         ${(battle.heal ?? 0) > 0            ? `<div class="bl-row gain">💚 Paladin healed +${battle.heal} HP</div>` : ''}
         ${(battle.spoils ?? 0) > 0          ? `<div class="bl-row gain">💰 War spoils: +${battle.spoils} gold</div>` : ''}

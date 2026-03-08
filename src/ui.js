@@ -4,7 +4,7 @@
 import { phaseName, phaseDescription, isMyPhase, threatLevel, threatClass,
          estimateEnemyPower, treasuryHint, armyHint, calcIncome, calcStaticDefence,
          calcDeployedPower, calcUpkeep, blacksmithDiscount, granaryDiscount,
-         BUILDINGS, UNITS, WIN_TURNS,
+         BUILDINGS, UNITS, WIN_TURNS, ENEMY_TYPES,
          unlockedBuildings, unlockedUnits, nextUnlockBuilding, nextUnlockUnit,
          BUILDING_UNLOCK_TURN, UNIT_UNLOCK_TURN } from './game.js';
 import { initMap, renderMap, renderBattleModal } from './map.js';
@@ -210,6 +210,27 @@ function renderFinancePanel(fin, def, pub, myTurn) {
   const buildingRows = available.map(b => {
     const owned  = buildings[b.id] || 0;
     const cost   = Math.max(0, b.cost - discount);
+    // City prerequisites
+    if (b.id === 'city') {
+      if (!(buildings.market > 0)) return `
+        <div class="shop-row shop-locked">
+          <div class="shop-icon-wrap">${b.icon}</div>
+          <div class="shop-info">
+            <div class="shop-label">${b.label}</div>
+            <div class="shop-desc">🔒 Requires a market first.</div>
+          </div>
+          <button class="btn btn-shop disabled-shop" disabled>${cost}💰</button>
+        </div>`;
+      if (owned >= 3) return `
+        <div class="shop-row shop-locked">
+          <div class="shop-icon-wrap">${b.icon}</div>
+          <div class="shop-info">
+            <div class="shop-label">${b.label} <span class="shop-owned">×${owned}</span></div>
+            <div class="shop-desc">Maximum 3 cities reached.</div>
+          </div>
+          <button class="btn btn-shop disabled-shop" disabled>Max</button>
+        </div>`;
+    }
     const canBuy = !dis && fin.resources >= cost;
     return `
       <div class="shop-row">
@@ -271,6 +292,7 @@ function renderDefencePanel(def, fin, pub, myTurn) {
   const defPow    = calcDeployedPower(units, finBld);
   const staticD   = calcStaticDefence(finBld);
   const totalDef  = defPow + staticD;
+  const eType     = ENEMY_TYPES[pub.currentEnemyType] || ENEMY_TYPES.standard;
   const available = unlockedUnits(turn);
   const nextUnit  = nextUnlockUnit(turn);
 
@@ -329,6 +351,7 @@ function renderDefencePanel(def, fin, pub, myTurn) {
         <div class="stat"><div class="stat-label">Treasury</div><div class="stat-value hint">${treasuryHint(fin?.resources || 0)}</div></div>
       </div>
       <div class="action-section">
+        ${eType.id !== 'standard' ? `<div class="enemy-warning ${eType.id}">${eType.icon} ${eType.label}: ${eType.desc}</div>` : ''}
         <h3>Army</h3>
         <div class="unit-list">${unitSummary}</div>
         <h3>Recruit</h3>
@@ -352,6 +375,7 @@ function renderSharedPanel(pub, fin, def, roomCode, myRole, onExit) {
   const hClass   = health>60?'health-high':health>30?'health-mid':'health-low';
   const desc     = phaseDescription(phase, myRole);
   const progress = Math.round((turn/WIN_TURNS)*100);
+  const eType    = ENEMY_TYPES[pub.currentEnemyType] || ENEMY_TYPES.standard;
 
   return `
     <div class="card shared-panel">
@@ -379,6 +403,13 @@ function renderSharedPanel(pub, fin, def, roomCode, myRole, onExit) {
         <span class="threat-label">⚠️ Next Wave</span>
         <span class="threat-value">${tLevel}</span>
         <span class="threat-range">(est. ${min}–${max})</span>
+      </div>
+      <div class="enemy-type-card et-${eType.id}">
+        <span class="et-icon">${eType.icon}</span>
+        <div class="et-body">
+          <div class="et-label">${eType.label}</div>
+          <div class="et-desc">${eType.desc}</div>
+        </div>
       </div>
     </div>`;
 }

@@ -11,7 +11,7 @@ export const BUILDINGS = {
   market:     { id:'market',     label:'Market',       icon:'🏪', cost:60,  income:25, defence:0,  desc:'+25 gold/turn. Trade brings wealth.' },
   granary:    { id:'granary',    label:'Granary',      icon:'🏚️', cost:50,  income:10, defence:0,  desc:'+10 gold/turn. Reduces soldier recruit cost by 1.' },
   blacksmith: { id:'blacksmith', label:'Blacksmith',   icon:'⚒️', cost:80,  income:0,  defence:0,  desc:'Reduces all unit costs by 2. Stacks x3.' },
-  city:       { id:'city',       label:'City',         icon:'🏙️', cost:100, income:50, defence:0,  desc:'+50 gold/turn. Major population centre.' },
+  city:       { id:'city',       label:'City',         icon:'🏙️', cost:100, income:50, defence:0,  desc:'+50 gold/turn. Requires a market. Max 3.' },
   wall:       { id:'wall',       label:'Stone Wall',   icon:'🧱', cost:70,  income:0,  defence:8,  desc:'+8 permanent defence. Absorbs hits.' },
   tower:      { id:'tower',      label:'Watch Tower',  icon:'🗼', cost:90,  income:5,  defence:12, desc:'+12 permanent defence. +5 gold/turn.' },
   cathedral:  { id:'cathedral',  label:'Cathedral',    icon:'⛪', cost:120, income:20, defence:5,  desc:'+20 gold/turn. +5 defence. +10% unit effectiveness.' },
@@ -30,21 +30,43 @@ export const UNITS = {
 };
 
 // ─── ENEMY POWER ─────────────────────────────────────────────────────────────
-// Turn 1: ~11-15  Turn 5: ~33-39  Turn 10: ~58-66  Turn 15: ~83-91
+// Turn 1: ~7-27  Turn 5: ~32-62  Turn 10: ~57-97  Turn 15: ~82-122
 export function calcEnemyPower(turn) {
-  const base = 8 + turn * 5;
-  return Math.max(5, base + Math.floor(Math.random() * 8) - 2);
+  const base = 7 + turn * 6;
+  return Math.max(5, base + Math.floor(Math.random() * 20) - 10);
 }
 export function estimateEnemyPower(turn) {
-  const base = 8 + turn * 5;
-  return { min: base - 2, max: base + 6, midpoint: base + 2 };
+  const base = 7 + turn * 6;
+  return { min: Math.max(5, base - 10), max: base + 10, midpoint: base };
 }
 export function threatLevel(turn) {
   const m = estimateEnemyPower(turn).midpoint;
   if (m < 20) return 'Low';
-  if (m < 40) return 'Moderate';
-  if (m < 65) return 'High';
+  if (m < 45) return 'Moderate';
+  if (m < 75) return 'High';
   return 'Critical';
+}
+
+// ─── ENEMY TYPES ─────────────────────────────────────────────────────────────
+export const ENEMY_TYPES = {
+  standard: { id:'standard', label:'Standard Assault', icon:'⚔️',  wallMult:1.0, troopMult:1.0, desc:'A standard military assault. Balanced defence required.' },
+  cavalry:  { id:'cavalry',  label:'Cavalry Raid',     icon:'🐴',  wallMult:0.0, troopMult:1.0, desc:'Fast raiders — walls provide no defence. Troops only.' },
+  siege:    { id:'siege',    label:'Siege Assault',    icon:'💣',  wallMult:0.5, troopMult:1.0, desc:'Siege engines halve wall effectiveness. Destroys a building on loss.' },
+  ambush:   { id:'ambush',   label:'Night Ambush',     icon:'🌑',  wallMult:1.0, troopMult:0.5, desc:'Surprise attack — troop power halved. Walls still count fully.' },
+};
+
+export function rollEnemyType(turn) {
+  if (turn <= 2) return 'standard';
+  const r = Math.random();
+  if (r < 0.20) return turn >= 5 ? 'cavalry' : 'standard';
+  if (r < 0.40) return turn >= 7 ? 'siege'   : 'standard';
+  if (r < 0.60) return 'ambush';
+  return 'standard';
+}
+
+// Walls become less effective vs stronger enemies — prevents pure wall stacking
+export function wallEffectiveness(adjEnemy) {
+  return Math.max(0.3, 1 - adjEnemy / 160);
 }
 export function threatClass(turn) {
   return { Low:'threat-low', Moderate:'threat-moderate', High:'threat-high', Critical:'threat-critical' }[threatLevel(turn)];
@@ -96,17 +118,19 @@ export function calcSpoils(deployedUnits, adjustedEnemy) {
 }
 
 // ─── BATTLE ──────────────────────────────────────────────────────────────────
-export function resolveBattle({ units, buildings, enemyPowerRaw }) {
-  // Firebase returns null for empty objects — always coerce
-  const du = (units && typeof units === 'object') ? units : {};
-  const bl = (buildings     && typeof buildings     === 'object') ? buildings     : {};
+export function resolveBattle({ units, buildings, enemyPowerRaw, enemyType = 'standard' }) {
+  const du   = (units     && typeof units     === 'object') ? units     : {};
+  const bl   = (buildings && typeof buildings === 'object') ? buildings : {};
+  const type = ENEMY_TYPES[enemyType] || ENEMY_TYPES.standard;
 
-  const staticDef   = calcStaticDefence(bl);
-  const unitPower   = calcDeployedPower(du, bl);
-  const arrows      = archerReduction(du);
-  const adjEnemy    = Math.max(0, enemyPowerRaw - arrows);
-  const totalDef    = unitPower + staticDef;
-  const win         = totalDef >= adjEnemy;
+  const staticDef          = calcStaticDefence(bl);
+  const arrows             = archerReduction(du);
+  const adjEnemy           = Math.max(0, enemyPowerRaw - arrows);
+  const unitPower          = Math.floor(calcDeployedPower(du, bl) * type.troopMult);
+  const wallEff            = Math.max(0, wallEffectiveness(adjEnemy) * type.wallMult);
+  const effectiveStaticDef = Math.floor(staticDef * wallEff);
+  const totalDef           = unitPower + effectiveStaticDef;
+  const win                = totalDef >= adjEnemy;
 
   const unitLosses  = {};
   let countryDamage = 0;
@@ -114,9 +138,7 @@ export function resolveBattle({ units, buildings, enemyPowerRaw }) {
   let heal          = 0;
 
   if (win) {
-    // Loss ratio scales with how close the fight was: easy wins cost ~5%, narrow wins ~30%
-    const lossRatio = (0.05 + 0.25 * (adjEnemy / Math.max(1, totalDef))) * (adjEnemy/ totalDef); // 0.05-0.3 based on closeness, then scaled by how much enemy power there was (so big wins with lots of enemy power still lose some units)
-
+    const lossRatio = (0.05 + 0.25 * (adjEnemy / Math.max(1, totalDef))) * (adjEnemy / totalDef);
     for (const [id, count] of Object.entries(du)) {
       if (UNITS[id]?.cavalryImmune) continue;
       const lost = Math.round(count * lossRatio);
@@ -132,7 +154,7 @@ export function resolveBattle({ units, buildings, enemyPowerRaw }) {
     countryDamage = Math.max(0, adjEnemy - totalDef);
   }
 
-  return { win, enemyPowerRaw, adjEnemy, arrows, staticDef, unitPower, totalDef, unitLosses, countryDamage, spoils, heal };
+  return { win, enemyPowerRaw, adjEnemy, arrows, staticDef, unitPower, effectiveStaticDef, wallEff, totalDef, unitLosses, countryDamage, spoils, heal, enemyType };
 }
 
 // ─── MAP ERA ─────────────────────────────────────────────────────────────────
