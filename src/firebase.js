@@ -300,27 +300,39 @@ export async function resolveAttack(roomCode) {
     }
 
     // ── THIS IS THE CRITICAL WRITE — always runs ──────────────────────────────
-    // lastBattle is embedded in publicState so both clients receive it atomically
-    // with the phase change — no separate subscription or timing issues.
+    // lastBattle is written as flat leaf paths inside publicState so both clients
+    // receive it atomically with the phase change. Nested objects are NOT allowed
+    // in Firebase multi-path update() — each field must be a scalar path.
     const updates = {
-      'publicState/countryHealth':  newHealth,
-      'publicState/phase':          nextPhase,
-      'publicState/turnNumber':     nextTurn,
-      'publicState/lastEnemyPower': rawPower,
-      'publicState/lastBattle': {
-        turn, win: battle.win,
-        adjEnemy: battle.adjEnemy, arrows: battle.arrows,
-        staticDef: battle.staticDef, unitPower: battle.unitPower, totalDef: battle.totalDef,
-        unitLosses: battle.unitLosses || {},
-        countryDamage: battle.countryDamage,
-        spoils: battle.spoils, heal: battle.heal,
-        income: battle.win ? income : 0, upkeep,
-        newHealth, ts: Date.now(),
-      },
+      'publicState/countryHealth':            newHealth,
+      'publicState/phase':                    nextPhase,
+      'publicState/turnNumber':               nextTurn,
+      'publicState/lastEnemyPower':           rawPower,
+      'publicState/lastBattle/turn':          turn,
+      'publicState/lastBattle/win':           battle.win,
+      'publicState/lastBattle/adjEnemy':      battle.adjEnemy,
+      'publicState/lastBattle/arrows':        battle.arrows,
+      'publicState/lastBattle/staticDef':     battle.staticDef,
+      'publicState/lastBattle/unitPower':     battle.unitPower,
+      'publicState/lastBattle/totalDef':      battle.totalDef,
+      'publicState/lastBattle/countryDamage': battle.countryDamage,
+      'publicState/lastBattle/spoils':        battle.spoils,
+      'publicState/lastBattle/heal':          battle.heal,
+      'publicState/lastBattle/income':        battle.win ? income : 0,
+      'publicState/lastBattle/upkeep':        upkeep,
+      'publicState/lastBattle/newHealth':     newHealth,
+      'publicState/lastBattle/ts':            Date.now(),
       'private/defence/unitCounts':    Object.keys(newUnitCounts).length > 0 ? newUnitCounts : null,
       'private/defence/deployedUnits': null,
       'private/defence/budget':        0,
     };
+    // unitLosses is itself an object — each entry needs its own flat path
+    const losses = battle.unitLosses || {};
+    if (Object.keys(losses).length > 0) {
+      Object.entries(losses).forEach(([id, n]) => { updates[`publicState/lastBattle/unitLosses/${id}`] = n; });
+    } else {
+      updates['publicState/lastBattle/unitLosses'] = null;
+    }
     if (!gameOver && !gameWon) {
       updates['private/finance/resources'] = newResources;
     }

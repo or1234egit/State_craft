@@ -125,7 +125,7 @@ export function resolveBattle({ deployedUnits, buildings, enemyPowerRaw }) {
     heal   = paladinHeal(du);
   } else {
     for (const [id, count] of Object.entries(du)) {
-      const lost = Math.max(0, Math.floor(count * Math.min(1 , 0.4 + (enemyPower - totalDef)/totalDef )));
+      const lost = Math.max(0, Math.floor(count * Math.min(1, 0.4 + (adjEnemy - totalDef) / Math.max(1, totalDef))));
       if (lost > 0) unitLosses[id] = lost;
     }
     countryDamage = Math.max(0, adjEnemy - totalDef);
