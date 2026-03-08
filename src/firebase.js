@@ -117,6 +117,7 @@ export async function buildBuilding(roomCode, buildingId, actionToken) {
 export async function transferResources(roomCode, amount, actionToken) {
   const amt = parseInt(amount, 10);
   if (!amt || amt <= 0) return { success: false, error: 'Enter a positive amount.' };
+  if (amt > 80) return { success: false, error: 'Maximum transfer is 80 gold per turn.' };
 
   const [finSnap, defSnap] = await Promise.all([get(financeRef(roomCode)), get(defenceRef(roomCode))]);
   if (!finSnap.exists()||!defSnap.exists()) return { success: false, error: 'State missing.' };
@@ -152,12 +153,11 @@ export async function recruitUnit(roomCode, unitId, count, actionToken) {
   const cnt = parseInt(count, 10);
   if (!cnt || cnt <= 0) return { success: false, error: 'Enter a positive count.' };
 
-  // Need finance buildings for discounts — read separately
+  // Granary reduces unit costs — blacksmith is buildings-only
   const finSnap = await get(financeRef(roomCode));
   const finBuildings = finSnap.val()?.buildings || {};
-  const bDiscount = blacksmithDiscount(finBuildings);
   const gDiscount = granaryDiscount(finBuildings);
-  const costEach = Math.max(1, unit.cost - bDiscount - gDiscount);
+  const costEach = Math.max(1, unit.cost - gDiscount);
   const totalCost = costEach * cnt;
 
   let result = { success: false, error: '' };

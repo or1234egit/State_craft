@@ -266,7 +266,7 @@ function renderFinancePanel(fin, def, pub, myTurn) {
         <div class="shop-list">${buildingRows}</div>
         ${nextHint}
         <div class="action-row transfer-row">
-          <input type="number" id="transfer-amount" min="1" placeholder="Gold" class="num-input" ${da}/>
+          <input type="number" id="transfer-amount" min="1" max="80" placeholder="Max 80" class="num-input" ${da}/>
           <button id="btn-transfer" class="btn btn-secondary" ${da}>Transfer to Defence</button>
         </div>
         <button id="btn-finance-end" class="btn btn-end" ${dis ? 'disabled' : ''}>End Finance Phase →</button>
@@ -285,9 +285,8 @@ function renderDefencePanel(def, fin, pub, myTurn) {
   const budget    = def.budget || 0;
   const units     = def.unitCounts || {};
   const finBld    = fin?.buildings || {};
-  const bDisc     = blacksmithDiscount(finBld);
   const gDisc     = granaryDiscount(finBld);
-  const totalDisc = bDisc + gDisc;
+  const totalDisc = gDisc;
   const upkeep    = calcUpkeep(units);
   const defPow    = calcDeployedPower(units, finBld);
   const staticD   = calcStaticDefence(finBld);

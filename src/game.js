@@ -10,7 +10,7 @@ export const BUILDINGS = {
   farm:       { id:'farm',       label:'Farm',         icon:'🌾', cost:30,  income:15, defence:0,  desc:'+15 gold/turn. Cheap food source.' },
   market:     { id:'market',     label:'Market',       icon:'🏪', cost:60,  income:25, defence:0,  desc:'+25 gold/turn. Trade brings wealth.' },
   granary:    { id:'granary',    label:'Granary',      icon:'🏚️', cost:50,  income:10, defence:0,  desc:'+10 gold/turn. Reduces soldier recruit cost by 1.' },
-  blacksmith: { id:'blacksmith', label:'Blacksmith',   icon:'⚒️', cost:80,  income:0,  defence:0,  desc:'Reduces all unit costs by 2. Stacks x3.' },
+  blacksmith: { id:'blacksmith', label:'Blacksmith',   icon:'⚒️', cost:80,  income:0,  defence:0,  desc:'Reduces all building costs by 2. Stacks x3.' },
   city:       { id:'city',       label:'City',         icon:'🏙️', cost:100, income:50, defence:0,  desc:'+50 gold/turn. Requires a market. Max 3.' },
   wall:       { id:'wall',       label:'Stone Wall',   icon:'🧱', cost:70,  income:0,  defence:8,  desc:'+8 permanent defence. Absorbs hits.' },
   tower:      { id:'tower',      label:'Watch Tower',  icon:'🗼', cost:90,  income:5,  defence:12, desc:'+12 permanent defence. +5 gold/turn.' },
@@ -22,7 +22,7 @@ export const UNITS = {
   militia:  { id:'militia',  label:'Militia',     icon:'🪓', cost:6,  power:1,  upkeep:0, cavalryImmune:false, desc:'Cheap. 1 power. Cannon fodder.' },
   infantry: { id:'infantry', label:'Infantry',    icon:'🗡️', cost:10, power:2,  upkeep:0, cavalryImmune:false, desc:'Reliable. 2 power per unit.' },
   archer:   { id:'archer',   label:'Archer',      icon:'🏹', cost:14, power:2,  upkeep:0, cavalryImmune:false, desc:'2 power + reduces enemy power by 1 before battle.' },
-  cavalry:  { id:'cavalry',  label:'Cavalry',     icon:'🐴', cost:22, power:5,  upkeep:0, cavalryImmune:true,  desc:'5 power. Never die on a win. Bring back spoils.' },
+  cavalry:  { id:'cavalry',  label:'Cavalry',     icon:'🐴', cost:22, power:5,  upkeep:4, cavalryImmune:true,  desc:'5 power. Never die on a win. Bring back spoils. 4 upkeep/turn.' },
   knight:   { id:'knight',   label:'Knight',      icon:'⚔️', cost:30, power:7,  upkeep:1, cavalryImmune:false, desc:'7 power. 1 upkeep/turn.' },
   siege:    { id:'siege',    label:'Siege Crew',  icon:'💣', cost:40, power:10, upkeep:2, cavalryImmune:false, desc:'10 power. 2 upkeep/turn.' },
   scout:    { id:'scout',    label:'Scout',       icon:'🔭', cost:8,  power:1,  upkeep:0, cavalryImmune:false, desc:'1 power. Reveals exact enemy strength this turn.' },
@@ -30,14 +30,14 @@ export const UNITS = {
 };
 
 // ─── ENEMY POWER ─────────────────────────────────────────────────────────────
-// Turn 1: ~10-35  Turn 5: ~50-80  Turn 10: ~100-135  Turn 15: ~155-190
+// Turn 1: ~20-50  Turn 5: ~105-155  Turn 10: ~230-280  Turn 15: ~360-420
 export function calcEnemyPower(turn) {
-  const base = 10 + turn * 10 + turn * turn * 0.4;
-  return Math.max(5, Math.floor(base + Math.random() * 30) - 15);
+  const base = 15 + turn * 18 + turn * turn * 0.6;
+  return Math.max(5, Math.floor(base + Math.random() * 50) - 25);
 }
 export function estimateEnemyPower(turn) {
-  const base = Math.floor(10 + turn * 10 + turn * turn * 0.4);
-  return { min: Math.max(5, base - 15), max: base + 15, midpoint: base };
+  const base = Math.floor(15 + turn * 18 + turn * turn * 0.6);
+  return { min: Math.max(5, base - 25), max: base + 25, midpoint: base };
 }
 export function threatLevel(turn) {
   const m = estimateEnemyPower(turn).midpoint;
@@ -75,7 +75,17 @@ export function threatClass(turn) {
 // ─── INCOME ──────────────────────────────────────────────────────────────────
 export function calcIncome(buildings) {
   if (!buildings || typeof buildings !== 'object') return 0;
-  return Object.entries(buildings).reduce((s,[id,n]) => s + (BUILDINGS[id]?.income||0)*n, 0);
+  let total = 0;
+  for (const [id, n] of Object.entries(buildings)) {
+    if (id === 'city') {
+      // Diminishing returns: 1st=50, 2nd=30, 3rd=15
+      const steps = [50, 30, 15];
+      for (let i = 0; i < Math.min(n, 3); i++) total += steps[i];
+    } else {
+      total += (BUILDINGS[id]?.income || 0) * n;
+    }
+  }
+  return total;
 }
 export function blacksmithDiscount(buildings) {
   return Math.min((buildings?.blacksmith||0), 3) * 2;
