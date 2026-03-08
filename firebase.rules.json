@@ -20,6 +20,11 @@
           ".write": true
         },
 
+        "lastBattle": {
+          // Battle result written by the client that resolves the attack
+          ".write": true
+        },
+
         "private": {
           "finance": {
             // Finance private data — write is transaction-guarded in app

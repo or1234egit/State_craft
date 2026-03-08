@@ -6,7 +6,7 @@ import {
   buildBuilding, transferResources, financeEndPhase,
   recruitUnit, defenceEndPhase,
   subscribePublicState, subscribeMeta, subscribePlayers,
-  subscribeFinance, subscribeDefence, subscribeLog, subscribeBattle,
+  subscribeFinance, subscribeDefence, subscribeLog,
 } from './firebase.js';
 
 import {
@@ -43,7 +43,7 @@ let state = {
   roomCode:null, myRole:null,
   meta:null, players:{},
   publicState:null, financeState:null, defenceState:null,
-  logEntries:[], lastBattle:null,
+  logEntries:[],
 };
 const unsubs = [];
 let lastShownBattleTs = null;  // timestamp of last battle modal we showed
@@ -118,27 +118,21 @@ function enterRoom(roomCode, myRole) {
     if (pub?.phase === 'attack') renderAttackOverlay();
     else removeAttackOverlay();
     handleStateChange();
-    // If phase just moved away from attack, check if we need to show the modal
-    if (pub?.phase !== 'attack') maybeShowBattleModal();
+    // Battle result is embedded in publicState.lastBattle — show modal when
+    // phase leaves 'attack' and we have a result we haven't shown yet.
+    if (pub?.phase !== 'attack') maybeShowBattleModal(pub?.lastBattle);
   }));
   unsubs.push(subscribeFinance(roomCode,  fin => { state.financeState = fin; handleStateChange(); }));
   unsubs.push(subscribeDefence(roomCode,  def => { state.defenceState = def; handleStateChange(); }));
   unsubs.push(subscribeLog(roomCode,      log => { state.logEntries = log;   handleStateChange(); }));
-  unsubs.push(subscribeBattle(roomCode,   b   => {
-    state.lastBattle = b;
-    // Show modal: new battle (different ts) AND phase is no longer attack
-    if (b?.ts && state.publicState?.phase !== 'attack') maybeShowBattleModal();
-  }));
 }
 
 // ─── BATTLE MODAL ────────────────────────────────────────────────────────────
-function maybeShowBattleModal() {
-  const b = state.lastBattle;
-  if (!b?.ts) return;
-  if (b.ts === lastShownBattleTs) return;       // already shown this battle
-  if (state.publicState?.phase === 'attack') return; // wait until phase clears
-  lastShownBattleTs = b.ts;
-  renderBattleModal(b, null);
+function maybeShowBattleModal(battle) {
+  if (!battle?.ts) return;
+  if (battle.ts === lastShownBattleTs) return;  // already shown
+  lastShownBattleTs = battle.ts;
+  renderBattleModal(battle, null);
 }
 
 // ─── STATE → SCREEN ───────────────────────────────────────────────────────────
@@ -200,7 +194,7 @@ function handleNewGame() {
   lastShownBattleTs = null;
   state = { roomCode:null, myRole:null, meta:null, players:{},
             publicState:null, financeState:null, defenceState:null,
-            logEntries:[], lastBattle:null };
+            logEntries:[] };
   renderHome({ onCreateRoom: handleCreateRoom, onJoinRoom: handleJoinRoom });
 }
 

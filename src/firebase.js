@@ -300,13 +300,25 @@ export async function resolveAttack(roomCode) {
     }
 
     // ── THIS IS THE CRITICAL WRITE — always runs ──────────────────────────────
+    // lastBattle is embedded in publicState so both clients receive it atomically
+    // with the phase change — no separate subscription or timing issues.
     const updates = {
-      'publicState/countryHealth': newHealth,
-      'publicState/phase':         nextPhase,
-      'publicState/turnNumber':    nextTurn,
+      'publicState/countryHealth':  newHealth,
+      'publicState/phase':          nextPhase,
+      'publicState/turnNumber':     nextTurn,
       'publicState/lastEnemyPower': rawPower,
+      'publicState/lastBattle': {
+        turn, win: battle.win,
+        adjEnemy: battle.adjEnemy, arrows: battle.arrows,
+        staticDef: battle.staticDef, unitPower: battle.unitPower, totalDef: battle.totalDef,
+        unitLosses: battle.unitLosses || {},
+        countryDamage: battle.countryDamage,
+        spoils: battle.spoils, heal: battle.heal,
+        income: battle.win ? income : 0, upkeep,
+        newHealth, ts: Date.now(),
+      },
       'private/defence/unitCounts':    Object.keys(newUnitCounts).length > 0 ? newUnitCounts : null,
-      'private/defence/deployedUnits': null,   // null = Firebase deletes the key (same as {})
+      'private/defence/deployedUnits': null,
       'private/defence/budget':        0,
     };
     if (!gameOver && !gameWon) {
