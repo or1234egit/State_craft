@@ -869,14 +869,12 @@ export function renderBattleModal(battle, onClose) {
     </div>`;
 
   document.body.appendChild(modal);
-  document.getElementById('bm-close-btn').addEventListener('click', () => {
-    modal.classList.add('bm-fade-out');
-    setTimeout(() => { modal.remove(); if (onClose) onClose(); }, 300);
-  });
-  modal.addEventListener('click', e => {
-    if (e.target === modal) {
-      modal.classList.add('bm-fade-out');
-      setTimeout(() => { modal.remove(); if (onClose) onClose(); }, 300);
-    }
-  });
+
+  const close = () => {
+    modal.style.transition = 'opacity .25s';
+    modal.style.opacity = '0';
+    setTimeout(() => { modal.remove(); if (onClose) onClose(); }, 250);
+  };
+  document.getElementById('bm-close-btn').addEventListener('click', close);
+  modal.addEventListener('click', e => { if (e.target === modal) close(); });
 }
