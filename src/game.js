@@ -30,20 +30,20 @@ export const UNITS = {
 };
 
 // ─── ENEMY POWER ─────────────────────────────────────────────────────────────
-// Turn 1: ~7-27  Turn 5: ~32-62  Turn 10: ~57-97  Turn 15: ~82-122
+// Turn 1: ~10-35  Turn 5: ~50-80  Turn 10: ~100-135  Turn 15: ~155-190
 export function calcEnemyPower(turn) {
-  const base = 7 + turn * 6;
-  return Math.max(5, base + Math.floor(Math.random() * 20) - 10);
+  const base = 10 + turn * 10 + turn * turn * 0.4;
+  return Math.max(5, Math.floor(base + Math.random() * 30) - 15);
 }
 export function estimateEnemyPower(turn) {
-  const base = 7 + turn * 6;
-  return { min: Math.max(5, base - 10), max: base + 10, midpoint: base };
+  const base = Math.floor(10 + turn * 10 + turn * turn * 0.4);
+  return { min: Math.max(5, base - 15), max: base + 15, midpoint: base };
 }
 export function threatLevel(turn) {
   const m = estimateEnemyPower(turn).midpoint;
-  if (m < 20) return 'Low';
-  if (m < 45) return 'Moderate';
-  if (m < 75) return 'High';
+  if (m < 30)  return 'Low';
+  if (m < 65)  return 'Moderate';
+  if (m < 110) return 'High';
   return 'Critical';
 }
 
