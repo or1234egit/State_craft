@@ -43,7 +43,7 @@ function resizeCanvas(container) {
 
 // ─── MAIN RENDER ENTRY ───────────────────────────────────────────────────────
 export function renderMap(container, { buildings, unitCounts, deployedUnits, phase, turn }) {
-  if (!canvas || !ctx) initMap(container);
+  if (!canvas || !ctx || !canvas.isConnected) initMap(container);
 
   const era = mapEra(buildings || {});
 
