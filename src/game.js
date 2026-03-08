@@ -115,7 +115,8 @@ export function resolveBattle({ units, buildings, enemyPowerRaw }) {
 
   if (win) {
     // Loss ratio scales with how close the fight was: easy wins cost ~5%, narrow wins ~30%
-    const lossRatio = 0.05 + 0.25 * (adjEnemy / Math.max(1, totalDef));
+    const lossRatio = (0.05 + 0.25 * (adjEnemy / Math.max(1, totalDef))) * (adjEnemy/ totalDef); // 0.05-0.3 based on closeness, then scaled by how much enemy power there was (so big wins with lots of enemy power still lose some units)
+
     for (const [id, count] of Object.entries(du)) {
       if (UNITS[id]?.cavalryImmune) continue;
       const lost = Math.round(count * lossRatio);
